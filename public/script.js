@@ -38,16 +38,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ plaats, postcode, straat, huisnummer }),
             });
 
-            // GECORRIGEERDE FOUTAFHANDELING
+            // GECORRIGEERDE FOUTAFHANDELING (v3)
             if (!response.ok) {
-                // Probeer de fout als JSON te lezen, maar als dat mislukt, lees het als tekst.
                 let errorMsg = `Serverfout: ${response.status}`;
+                
+                // STAP 1: Lees de body als TEXT (dit kan maar één keer)
+                const errorText = await response.text();
+
+                // STAP 2: Probeer de tekst te parsen als JSON
                 try {
-                    const errorData = await response.json();
+                    const errorData = JSON.parse(errorText);
                     errorMsg = errorData.error || errorMsg;
                 } catch (e) {
-                    // De fout was geen JSON (waarschijnlijk HTML), lees als tekst
-                    errorMsg = await response.text(); 
+                    // Het was geen JSON (waarschijnlijk HTML), gebruik de ruwe tekst
+                    // Verwijder HTML-tags voor een schonere foutmelding
+                    errorMsg = errorText.replace(/<[^>]*>?/gm, '');
                 }
                 throw new Error(errorMsg);
             }
