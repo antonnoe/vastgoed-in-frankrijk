@@ -46,10 +46,17 @@ export default async function handler(request, response) {
     let ruwDossier = {}; // Hier verzamelen we alle data
 
     try {
-        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - SIMPELE METHODE) ---
+        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - SLIMME METHODE v2) ---
+        
         // We plakken alles aan elkaar tot één string.
         const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
-        const adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
+        
+        // DE REPARATIE: We voegen de 'type=municipality' parameter toe
+        // als de gebruiker GEEN straat of huisnummer heeft ingevuld.
+        let adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
+        if (!straat && !huisnummer) {
+             adresUrl += `&type=municipality`; // Zoek naar een gemeente
+        }
         
         const adresData = await fetchAPI(adresUrl);
         const gevondenAdres = adresData?.features?.[0];
