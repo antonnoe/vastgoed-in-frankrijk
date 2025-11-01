@@ -44,43 +44,29 @@ export default async function handler(request, response) {
     }
 
     let ruwDossier = {}; // Hier verzamelen we alle data
-    let gevondenAdres = null;
-    let gevondenGemeente = null;
 
     try {
-        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - SLIMMERE METHODE) ---
-        const zoekAdres = [huisnummer, straat].filter(Boolean).join(' ');
+        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - SIMPELE METHODE) ---
         
-        // DE REPARATIE: We zoeken nu op het adres (q) BINNEN de gemeente (city) en postcode.
-        // Dit is veel robuuster en vindt 'Rue de sehen' ook al is de officiële spelling 'Séhen'.
-        const adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(zoekAdres)}&city=${encodeURIComponent(plaats)}&postcode=${encodeURIComponent(postcode)}&limit=1`;
+        // DE REPARATIE: We plakken alles aan elkaar tot één string.
+        // We sturen NIET langer "city=" of "postcode=". Alleen "q=".
+        const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
+        const adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
         
         const adresData = await fetchAPI(adresUrl);
-        gevondenAdres = adresData?.features?.[0];
+        const gevondenAdres = adresData?.features?.[0];
         
         if (!gevondenAdres) {
-            // Als het nog steeds mislukt, probeer alleen de gemeente
-            const gemeenteUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(plaats)}&postcode=${encodeURIComponent(postcode)}&limit=1`;
-            const gemeenteData = await fetchAPI(gemeenteUrl);
-            gevondenGemeente = gemeenteData?.features?.[0];
-            if (!gevondenGemeente) {
-                 return response.status(404).json({ error: `Adres en gemeente niet gevonden: ${plaats} ${postcode}` });
-            }
-            ruwDossier.adres = `Adres niet specifiek gevonden, rapport is voor het centrum van: ${gevondenGemeente.properties.label}`;
-        } else {
-             ruwDossier.adres = `Gevonden officieel adres: ${gevondenAdres.properties.label}`;
+            // De Franse API kon de *hele* string niet vinden.
+            return response.status(404).json({ error: `Adres niet gevonden via Franse API (Géoplateforme). De API kon niets vinden met de zoekterm: "${queryParts}"` });
         }
         
-        // Haal coördinaten en kadasterId uit de succesvolle vondst
-        const actieveVondst = gevondenAdres || gevondenGemeente;
-        const [lon, lat] = actieveVondst.geometry.coordinates;
-        const kadasterId = actieveVondst.properties.cadastral_parcel_id;
+        const { coordinates } = gevondenAdres.geometry;
+        const [lon, lat] = coordinates;
+        const kadasterId = gevondenAdres.properties.cadastral_parcel_id; 
         
-        if(kadasterId) {
-             ruwDossier.kadasterId = kadasterId;
-        } else {
-             ruwDossier.kadasterId = "Geen kadaster ID gevonden voor dit adres.";
-        }
+        ruwDossier.adres = `Gevonden officieel adres: ${gevondenAdres.properties.label}`;
+        ruwDossier.kadasterId = kadasterId || "Geen kadaster ID gevonden voor dit adres.";
 
 
         // --- STAP B: Risico's Ophalen (API Géorisques) ---
@@ -117,6 +103,6 @@ export default async function handler(request, response) {
 
     } catch (error) {
         console.error("Onverwachte fout in API-motor:", error);
-        return response.status(500).json({ error: `Interne serverfout: ${error.message}` });
+        return response.status(5Openingstijden) .json({ error: `Interne serverfout: ${error.message}` });
     }
 }
