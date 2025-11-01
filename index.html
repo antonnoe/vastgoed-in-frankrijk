@@ -10,7 +10,7 @@
 
     <header>
         <h1>Het Franse Vastgoed Kompas</h1>
-        <p>Uw complete due diligence tool voor de Franse huizenmarkt.</p>
+        <p>Uw interactieve due diligence tool voor de Franse huizenmarkt.</p>
     </header>
 
     <div class="tab-container">
@@ -20,16 +20,38 @@
         </div>
 
         <div id="DossierDashboard" class="tab-content active">
-            <h2>1. Dossier Dashboard: Genereer uw links</h2>
-            <p>Voer een volledig Frans adres in en wij genereren de directe links naar de 5 belangrijkste officiële bronnen voor dat specifieke perceel.</p>
+            <h2>1. Genereer uw Onderzoeks-Hub</h2>
+            <p>Vul de 4 velden in (plaats is verplicht) en klik op "Genereer Dashboard".</p>
             
-            <div class="input-group">
-                <input type="text" id="adresInput" placeholder="Bijv: 22 Rue de Séhen, 62170 Montcavrel">
-                <button id="genereerButton">Genereer Links</button>
+            <div class="form-grid">
+                <div class="input-veld">
+                    <label for="plaatsInput">Plaatsnaam (verplicht)</label>
+                    <input type="text" id="plaatsInput" placeholder="Bijv: Montcavrel">
+                </div>
+                <div class="input-veld">
+                    <label for="postcodeInput">Postcode</label>
+                    <input type="text" id="postcodeInput" placeholder="Bijv: 62170">
+                </div>
+                <div class="input-veld">
+                    <label for="straatInput">Straatnaam</label>
+                    <input type="text" id="straatInput" placeholder="Bijv: Rue de Séhen">
+                </div>
+                <div class="input-veld">
+                    <label for="huisnummerInput">Huisnummer</label>
+                    <input type="text" id="huisnummerInput" placeholder="Bijv: 22">
+                </div>
+            </div>
+            
+            <div class="button-container">
+                <button id="genereerButton">Genereer Dashboard</button>
             </div>
 
-            <div id="linksOutput" class="links-container">
-                <p class="placeholder-text">Voer een adres in om de links te genereren.</p>
+            <div id="dashboardTegels" class="tegels-container">
+                </div>
+
+            <div id="actieKnoppenContainer" class="actie-knoppen" style="display: none;">
+                <button id="opslaanButton" class="actie-knop save">💾 Notities Opslaan (in browser)</button>
+                <button id="promptButton" class="actie-knop prompt">🚀 Genereer AI-Prompt</button>
             </div>
         </div>
 
@@ -63,38 +85,20 @@
                 <p>Dit is de cruciale vraag om aan de notaris te stellen: "Is er ooit een schadevergoeding uitgekeerd aan deze of vorige eigenaren voor een 'sinistre' die het gevolg was van een 'catastrophe naturelle'?"</p>
             </article>
 
-            <article class="gids-sectie">
-                <h3>Advies: Uw Verzekeringspolis (De 'Que Choisir'-hoek)</h3>
-                <p>Omdat de 'Cat Nat'-dekking een politiek spel kan zijn, is de kwaliteit van uw basispolis ('multirisque habitation') essentieel.</p>
-                <ul>
-                    <li><strong>Oververzekering:</strong> Nederlanders neigen ernaar oververzekerd te zijn. Fransen zijn dit minder, maar de 'bangmaakcultuur' bij de verkoop van polissen is er wel.</li>
-                    <li><strong>Beste Advies:</strong> Vergelijk polissen niet alleen op prijs, maar op de dekking van 'gewone' storm, water en bliksem. Controleer de *franchise* (eigen risico), die bij 'Cat Nat'-claims vaak wettelijk vastligt, maar bij 'gewone' stormen enorm kan variëren.</li>
-                    <li><strong>Consumentenbond:</strong> Organisaties zoals 'Que Choisir' publiceren jaarlijks vergelijkingen van woonverzekeringen. Het loont de moeite om hun gidsen te raadplegen alvorens te tekenen.</li>
-                </ul>
-            </article>
+        </div>
+    </div>
 
+    <div id="promptModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" id="modalClose">&times;</span>
+            <h2>Uw AI-Prompt is Klaar</h2>
+            <p>Kopieer de onderstaande tekst en plak deze in uw chat met Gemini (of een andere AI) voor een volledige analyse.</p>
+            <textarea id="promptOutput" readonly></textarea>
+            <button id="kopieerPromptButton">Kopieer naar Klembord</button>
         </div>
     </div>
 
     <script src="script.js"></script>
-    <script>
-        // Simpele JavaScript voor de tabbladen
-        function openTab(evt, tabName) {
-            var i, tabcontent, tabbuttons;
-            tabcontent = document.getElementsByClassName("tab-content");
-            for (i = 0; i < tabcontent.length; i++) {
-                tabcontent[i].style.display = "none";
-            }
-            tabbuttons = document.getElementsByClassName("tab-button");
-            for (i = 0; i < tabbuttons.length; i++) {
-                tabbuttons[i].className = tabbuttons[i].className.replace(" active", "");
-            }
-            document.getElementById(tabName).style.display = "block";
-            evt.currentTarget.className += " active";
-        }
-        // Open de eerste tab standaard
-        document.getElementById("DossierDashboard").style.display = "block";
-    </script>
 
 </body>
 </html>
