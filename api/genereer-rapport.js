@@ -1,4 +1,4 @@
-// Dit is onze "Hybride Motor" (v12 - Duale Logica)
+// Dit is onze "Hybride Motor" (v13 - Correcte API Logica)
 // HET DOEL: Zowel specifieke als gemeentebrede data ophalen.
 
 // Hulpfunctie om externe APIs aan te roepen
@@ -54,17 +54,20 @@ export default async function handler(request, response) {
         
         automatischDossier.adres = `Gevonden officieel adres: ${gevondenAdres.properties.label}`;
 
-        // --- STAP B: Risico's Ophalen (DE "CHATGPT" METHODE) ---
+        // --- STAP B: Risico's Ophalen (DE "CHATGPT" METHODE - GECORRIGEERD) ---
         // We gebruiken de INSEE code om ALLE risico's van de GEMEENTE op te halen.
-        const georisquesUrl = `https://api.georisques.gouv.fr/api/v1/risques?code_insee=${inseeCode}`;
+        // DIT IS DE CORRECTE API VOOR NATUURRAMPEN (Cat Nat)
+        const georisquesUrl = `https://api.georisques.gouv.fr/api/v1/catnat?code_insee=${inseeCode}&page=1&page_size=10`; // Pak de 10 laatste events
         const risicoData = await fetchAPI(georisquesUrl);
+        
         if (risicoData?.data?.length > 0) {
-             automatischDossier.georisques = JSON.stringify(risicoData.data, null, 2);
+             automatischDossier.georisques = `LET OP: ${risicoData.data.length} natuurramp(en) ('Cat Nat') erkend voor deze gemeente (meest recente bovenaan):\n\n`;
+             automatischDossier.georisques += JSON.stringify(risicoData.data, null, 2);
         } else {
-            automatischDossier.georisques = "Geen gemeentebrede risico's gevonden in de database.";
+            automatischDossier.georisques = "Geen erkende natuurrampen ('Cat Nat') gevonden voor deze gemeente.";
         }
 
-        // --- STAP C: Verkopen Ophalen (DE FALLBACK METHODE) ---
+        // --- STAP C: Verkopen Ophalen (DE FALLBACK METHODE - GECORRIGEERD) ---
         let dvfData = null;
         if (kadasterId) {
             // Plan A: Zoek op het specifieke perceel
@@ -75,13 +78,14 @@ export default async function handler(request, response) {
         // Plan B: Als Plan A faalt (geen kadasterId of geen resultaten), zoek in de hele gemeente
         if (!dvfData || !dvfData.mutations || dvfData.mutations.length === 0) {
             automatischDossier.dvf = "Geen verkopen gevonden op het specifieke perceel. Bezig met zoeken in de hele gemeente...\n\n";
-            const dvfGemeenteUrl = `https://api.dvf.etalab.gouv.fr/api/latest/mutations?code_insee=${inseeCode}&limit=10`; // Pak de 10 laatste in de gemeente
-            dvfData = await fetchAPI(dvfGemeenteUrl);
-            
-            if (dvfData?.mutations?.length > 0) {
-                 automatischDossier.dvf += JSON.stringify(dvfData.mutations, null, 2);
+            // DIT IS DE CORRECTE FALLBACK API AANROEP
+            const dvfGemeenteUrl = `https://api.dvf.etalab.gouv.fr/api/latest/stats/commune?code_insee=${inseeCode}`; 
+            const dvfStats = await fetchAPI(dvfGemeenteUrl);
+
+            if (dvfStats) {
+                 automatischDossier.dvf += "Statistieken voor de gemeente (laatste 24 maanden):\n" + JSON.stringify(dvfStats, null, 2);
             } else {
-                 automatischDossier.dvf = "Kon DVF niet controleren (geen kadaster ID) en ook geen verkopen gevonden in de hele gemeente.";
+                 automatischDossier.dvf = "Kon DVF niet controleren (geen kadaster ID) en ook geen statistieken gevonden voor de hele gemeente.";
             }
         } else {
              automatischDossier.dvf = "Verkopen gevonden op/rond het specifieke perceel:\n\n" + JSON.stringify(dvfData.mutations, null, 2);
