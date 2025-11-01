@@ -44,21 +44,19 @@ export default async function handler(request, response) {
     }
 
     let ruwDossier = {}; // Hier verzamelen we alle data
-    let adresUrl = '';
-    let queryParts = '';
 
     try {
-        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - SLIMME METHODE v3) ---
+        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - SLIMME METHODE v8) ---
         
-        // DE REPARATIE: We splitsen de logica
-        if (straat) {
-            // LOGICA 1: GEBRUIKER ZOEKT EEN SPECIFIEK ADRES
-            queryParts = [huisnummer, straat].filter(Boolean).join(' ');
-            adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&city=${encodeURIComponent(plaats)}&postcode=${encodeURIComponent(postcode)}&limit=1`;
+        // DE REPARATIE: We plakken alles in één 'q' string...
+        const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
+        let adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
+        
+        // ...en we voegen een 'type' filter toe gebaseerd op de invoer
+        if (straat || huisnummer) {
+            adresUrl += `&type=housenumber`; // Zoek een specifiek adres
         } else {
-            // LOGICA 2: GEBRUIKER ZOEKT ALLEEN EEN GEMEENTE
-            queryParts = [plaats, postcode].filter(Boolean).join(' ');
-            adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(plaats)}&postcode=${encodeURIComponent(postcode)}&type=municipality&limit=1`;
+            adresUrl += `&type=municipality`; // Zoek een gemeente
         }
         
         const adresData = await fetchAPI(adresUrl);
@@ -86,7 +84,7 @@ export default async function handler(request, response) {
         if (kadasterId) {
             const dvfUrl = `https://api.dvf.etalab.gouv.fr/api/latest/mutations?parcelle_id=${kadasterId}&around=500&limit=5`;
             const dvfData = await fetchAPI(dvfUrl);
-            ruwDossier.dvf = dvfData?.mutations || "Geen recente verkopen gevonden op/rond dit perceel.";
+            ruwDDossier.dvf = dvfData?.mutations || "Geen recente verkopen gevonden op/rond dit perceel.";
         } else {
             ruwDossier.dvf = "Kon DVF niet controleren omdat er geen kadaster ID werd gevonden.";
         }
