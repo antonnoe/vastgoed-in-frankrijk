@@ -1,6 +1,5 @@
-// Dit is onze "server-motor" (Node.js - CommonJS Stijl)
-// We gebruiken 'require' voor alles
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+// Dit is onze "server-motor" (ES Module Stijl, met import)
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Haal onze ENIGE geheime API-sleutel op
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -25,8 +24,8 @@ async function fetchAPI(url, options = {}) {
 }
 
 // --- De Hoofdfunctie ---
-// Dit is de handler, nu in CommonJS stijl
-module.exports = async (request, response) => {
+// Dit is de handler, nu met "export default"
+export default async function handler(request, response) {
     // 1. Check of het een POST-verzoek is
     if (request.method !== 'POST') {
         return response.status(405).json({ error: 'Alleen POST-verzoeken zijn toegestaan' });
