@@ -38,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ plaats, postcode, straat, huisnummer }),
             });
 
-            // GECORRIGEERDE FOUTAFHANDELING (v3)
+            // GECORRIGEERDE FOUTAFHANDELING
             if (!response.ok) {
                 let errorMsg = `Serverfout: ${response.status}`;
                 
