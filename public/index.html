@@ -10,17 +10,17 @@
 
     <header>
         <h1>Het Franse Vastgoed Kompas</h1>
-        <p>Uw AI-gedreven due diligence tool voor de Franse huizenmarkt.</p>
+        <p>Uw Hybride Due Diligence Tool</p>
     </header>
 
     <div class="tab-container">
         <div class="tab-buttons">
-            <button class="tab-button active">AI Rapport Generator</button>
-            </div>
+            <button class="tab-button active">Hybride Dossier Generator</button>
+        </div>
 
         <div id="DossierDashboard" class="tab-content active">
-            <h2>Genereer uw AI-Rapport</h2>
-            <p>Vul de 4 velden in (plaats is verplicht) en laat de AI het onderzoek doen.</p>
+            <h2>Stap 1: Genereer het Automatische Dossier</h2>
+            <p>Vul de 4 velden in (plaats is verplicht). De tool haalt automatisch data op van Géorisques en DVF.</p>
             
             <div class="form-grid">
                 <div class="input-veld">
@@ -42,15 +42,58 @@
             </div>
             
             <div class="button-container">
-                <button id="genereerButton">Genereer AI-Rapport</button>
+                <button id="genereerButton">Genereer Automatisch Dossier</button>
             </div>
 
-            <div id="resultaatContainer" class="resultaat-container" style="display: none;">
-                <h2>Uw Rapport</h2>
-                <div id="rapportOutput">
+            <div id="dashboardTegels" class="tegels-container" style="display: none;">
+                
+                <div class="tegel">
+                    <div class="tegel-header"><h3>1. Officieel Adres (Automatisch)</h3></div>
+                    <div class="tegel-body">
+                        <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
                     </div>
+                </div>
+
+                <div class="tegel">
+                    <div class="tegel-header"><h3>2. Risico's (Automatisch)</h3></div>
+                    <div class="tegel-body">
+                        <textarea id="notes-risques" class="tegel-textarea" readonly></textarea>
+                    </div>
+                </div>
+
+                <div class="tegel">
+                    <div class="tegel-header"><h3>3. Verkoopprijzen (Automatisch)</h3></div>
+                    <div class="tegel-body">
+                        <textarea id="notes-dvf" class="tegel-textarea" readonly></textarea>
+                    </div>
+                </div>
+
+                <div class="tegel handmatig">
+                    <div class="tegel-header"><h3>4. Bestemmingsplan (Handmatig)</h3></div>
+                    <div class="tegel-body">
+                        <p>Deze data kan niet automatisch. Klik op de knop, zoek uw perceel, en plak de regels (bv. 'Zone Ub') hier.</p>
+                        <a href="https://www.geoportail-urbanisme.gouv.fr/map/" class="tegel-knop" target="_blank">Open Bestemmingsplan Kaart</a>
+                        <label for="notes-plu">Plak hier uw bevindingen:</label>
+                        <textarea id="notes-plu" class="tegel-textarea" placeholder="Typ of plak hier de PLU-regels..."></textarea>
+                    </div>
+                </div>
+
             </div>
 
+            <div id="actieKnoppenContainer" class="actie-knoppen" style="display: none;">
+                <button id="promptButton" class="actie-knop prompt">🚀 Genereer AI-Prompt (Stap 2)</button>
+            </div>
+
+        </div>
+    </div>
+
+    <div id="promptModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" id="modalClose">&times;</span>
+            <h2>Uw AI-Prompt is Klaar</h2>
+            <p>Kopieer de onderstaande tekst en plak deze in uw chat met Gemini (of een andere AI) voor een volledige analyse.</p>
+            <textarea id="promptOutput" readonly></textarea>
+            <button id="kopieerPromptButton">Kopieer naar Klembord</button>
         </div>
     </div>
 
