@@ -1,5 +1,5 @@
-// Dit is onze "Hybride Motor" (ES Module Stijl, met import)
-// HET DOEL: Alleen automatiseerbare data ophalen. DE AI WORDT HIER NIET AANGEROEPEN.
+// Dit is onze "Hybride Motor" (ES Module Stijl)
+// HET DOEL: Alleen automatiseerbare data ophalen.
 
 // Hulpfunctie om externe APIs aan te roepen
 async function fetchAPI(url, options = {}) {
@@ -36,15 +36,11 @@ export default async function handler(request, response) {
     };
 
     try {
-        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - v8) ---
-        const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
-        let adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
+        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - DE SIMPELE METHODE) ---
         
-        if (straat || huisnummer) {
-            adresUrl += `&type=housenumber`; // Zoek een specifiek adres
-        } else {
-            adresUrl += `&type=municipality`; // Zoek een gemeente
-        }
+        // DE REPARATIE: Plak alles in één 'q' string. Geen 'type' filters. Geen 'city' filters.
+        const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
+        const adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
         
         const adresData = await fetchAPI(adresUrl);
         const gevondenAdres = adresData?.features?.[0];
