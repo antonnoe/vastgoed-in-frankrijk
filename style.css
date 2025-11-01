@@ -1,0 +1,120 @@
+/* Algemene Huisstijl */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    background-color: #f4f7f6;
+    color: #333;
+    margin: 0;
+    padding: 0;
+}
+
+header {
+    background-color: #004a99; /* Blauwe kleur */
+    color: #ffffff;
+    padding: 20px 40px;
+    text-align: center;
+}
+
+header h1 {
+    margin: 0 0 10px 0;
+}
+
+/* Tabbladen Systeem */
+.tab-container {
+    max-width: 900px;
+    margin: 30px auto;
+    padding: 0 20px;
+}
+
+.tab-buttons {
+    display: flex;
+    border-bottom: 2px solid #ddd;
+    margin-bottom: 20px;
+}
+
+.tab-button {
+    background-color: #eee;
+    border: none;
+    padding: 15px 25px;
+    cursor: pointer;
+    font-size: 16px;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+    margin-right: 5px;
+    transition: background-color 0.3s;
+}
+
+.tab-button:hover {
+    background-color: #ddd;
+}
+
+.tab-button.active {
+    background-color: #004a99;
+    color: white;
+    border-bottom: 2px solid #004a99;
+}
+
+.tab-content {
+    display: none;
+    background-color: #ffffff;
+    padding: 30px;
+    border-radius: 5px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* Stijl voor Tab 1: Dashboard */
+.input-group {
+    display: flex;
+    margin-bottom: 20px;
+}
+
+#adresInput {
+    flex-grow: 1;
+    font-size: 16px;
+    padding: 12px;
+    border: 2px solid #ccc;
+    border-radius: 5px 0 0 5px;
+}
+
+#genereerButton {
+    font-size: 16px;
+    padding: 12px 20px;
+    background-color: #28a745; /* Groene knop */
+    color: white;
+    border: none;
+    cursor: pointer;
+    border-radius: 0 5px 5px 0;
+}
+
+#genereerButton:hover {
+    background-color: #218838;
+}
+
+.links-container .placeholder-text {
+    color: #888;
+    text-align: center;
+    font-style: italic;
+}
+
+/* Stijl voor Tab 2: Gids */
+.gids-sectie {
+    border-bottom: 1px solid #eee;
+    padding-bottom: 15px;
+    margin-bottom: 15px;
+}
+
+.gids-sectie h3 {
+    color: #004a99;
+}
+
+.gids-sectie:last-child {
+    border-bottom: none;
+}
+
+ul {
+    padding-left: 20px;
+}
