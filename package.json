@@ -1,0 +1,13 @@
+{
+  "name": "vastgoed-kompas-api",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "API motor voor het Vastgoed Kompas",
+  "main": "index.js",
+  "scripts": {
+    "start": "node api/genereer-rapport.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.15.0"
+  }
+}
