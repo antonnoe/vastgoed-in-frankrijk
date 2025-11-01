@@ -1,14 +1,15 @@
-// Dit is onze "server-motor" (Node.js)
+// Dit is onze "server-motor" (Node.js - CommonJS Stijl)
+// We gebruiken 'require' voor alles
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// Haal onze ENIGE geheime API-sleutel op (deze stellen we in Vercel in)
+// Haal onze ENIGE geheime API-sleutel op
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // Initialiseer de AI
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// Hulpfunctie om externe APIs aan te roepen (zoals de Franse)
+// Hulpfunctie om externe APIs aan te roepen
 async function fetchAPI(url, options = {}) {
     try {
         const response = await fetch(url, options);
@@ -24,8 +25,8 @@ async function fetchAPI(url, options = {}) {
 }
 
 // --- De Hoofdfunctie ---
-// Dit is wat Vercel uitvoert bij elke aanvraag
-export default async function handler(request, response) {
+// Dit is de handler, nu in CommonJS stijl
+module.exports = async (request, response) => {
     // 1. Check of het een POST-verzoek is
     if (request.method !== 'POST') {
         return response.status(405).json({ error: 'Alleen POST-verzoeken zijn toegestaan' });
@@ -46,10 +47,8 @@ export default async function handler(request, response) {
     let ruwDossier = {}; // Hier verzamelen we alle data
 
     try {
-        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - GECORRIGEERDE API AANROEP) ---
+        // --- STAP A: Adres Standaardiseren (Géoplateforme) ---
         const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
-        
-        // DE REPARATIE: De API-url was fout. Dit is de juiste "search" endpoint.
         const adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
         
         const adresData = await fetchAPI(adresUrl);
@@ -61,7 +60,6 @@ export default async function handler(request, response) {
         
         const { coordinates } = gevondenAdres.geometry;
         const [lon, lat] = coordinates;
-        // Haal de kadastrale ID op uit de properties (als die bestaat)
         const kadasterId = gevondenAdres.properties.cadastral_parcel_id; 
         
         ruwDossier.adres = `Gevonden officieel adres: ${gevondenAdres.properties.label}`;
