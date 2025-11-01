@@ -105,26 +105,169 @@ header h1 {
     background-color: #218838;
 }
 
-/* Stijl voor Resultaat */
-.resultaat-container {
-    margin-top: 30px;
-    border-top: 2px solid #eee;
-    padding-top: 20px;
+/* Tegel Systeem */
+.tegels-container {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 25px;
+    margin-top: 20px;
 }
 
-#rapportOutput {
+.tegel {
     background-color: #fdfdfd;
     border: 1px solid #ddd;
     border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    display: flex;
+    flex-direction: column;
+}
+
+/* NIEUWE STIJL: */
+.tegel.handmatig {
+    border-left: 5px solid #ffc107; /* Gele accent voor handmatig */
+}
+
+.tegel-header {
+    background-color: #f9f9f9;
+    border-bottom: 1px solid #ddd;
+    padding: 15px 20px;
+    border-radius: 8px 8px 0 0;
+}
+
+.tegel-header h3 {
+    margin: 0;
+    color: #004a99;
+}
+
+.tegel-body {
     padding: 20px;
-    white-space: pre-wrap; /* Behoudt opmaak van AI */
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+}
+
+.tegel-body p {
+    margin-top: 0;
+}
+
+.tegel-knop {
+    display: inline-block;
+    background-color: #0056b3;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 5px;
+    text-decoration: none;
+    font-weight: bold;
+    text-align: center;
+    transition: background-color 0.3s;
+    margin-bottom: 15px;
+}
+
+.tegel-knop:hover {
+    background-color: #004a99;
+}
+
+.tegel-body label {
+    font-weight: bold;
+    font-size: 0.9em;
+    color: #333;
+    margin-bottom: 5px;
+}
+
+.tegel-textarea {
+    width: 100%;
+    min-height: 100px;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    box-sizing: border-box; 
+}
+
+/* Stijl voor [readonly] (automatische) velden */
+.tegel-textarea[readonly] {
+    background-color: #f1f1f1;
+    color: #333;
     font-family: "Courier New", Courier, monospace;
 }
 
-/* Stijl voor "Laden..." */
-#rapportOutput.loading {
-    text-align: center;
-    font-style: italic;
-    color: #555;
-    padding: 40px;
+/* Actieknoppen (Prompt) */
+.actie-knoppen {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 2px solid #eee;
+    display: flex;
+    gap: 15px;
+}
+
+.actie-knop.prompt {
+    flex-grow: 1;
+    font-size: 16px;
+    font-weight: bold;
+    padding: 15px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.3s;
+    background-color: #17a2b8;
+    color: white;
+}
+.actie-knop.prompt:hover {
+    background-color: #138496;
+}
+
+/* Modal (Pop-up) Stijlen */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background-color: #fefefe;
+    margin: 10% auto;
+    padding: 30px;
+    border: 1px solid #888;
+    width: 80%;
+    max-width: 700px;
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+.modal-close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+#promptOutput {
+    width: 100%;
+    height: 250px;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 14px;
+    margin-top: 15px;
+    margin-bottom: 15px;
+    padding: 10px;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    background-color: #f9f9f9;
+}
+
+#kopieerPromptButton {
+    background-color: #004a99;
+    color: white;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
 }
