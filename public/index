@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Het Franse Vastgoed Kompas</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <header>
+        <h1>Het Franse Vastgoed Kompas</h1>
+        <p>Uw AI-gedreven due diligence tool voor de Franse huizenmarkt.</p>
+    </header>
+
+    <div class="tab-container">
+        <div class="tab-buttons">
+            <button class="tab-button active">AI Rapport Generator</button>
+            </div>
+
+        <div id="DossierDashboard" class="tab-content active">
+            <h2>Genereer uw AI-Rapport</h2>
+            <p>Vul de 4 velden in (plaats is verplicht) en laat de AI het onderzoek doen.</p>
+            
+            <div class="form-grid">
+                <div class="input-veld">
+                    <label for="plaatsInput">Plaatsnaam (verplicht)</label>
+                    <input type="text" id="plaatsInput" placeholder="Bijv: Montcavrel">
+                </div>
+                <div class="input-veld">
+                    <label for="postcodeInput">Postcode</label>
+                    <input type="text" id="postcodeInput" placeholder="Bijv: 62170">
+                </div>
+                <div class="input-veld">
+                    <label for="straatInput">Straatnaam</label>
+                    <input type="text" id="straatInput" placeholder="Bijv: Rue de Séhen">
+                </div>
+                <div class="input-veld">
+                    <label for="huisnummerInput">Huisnummer</label>
+                    <input type="text" id="huisnummerInput" placeholder="Bijv: 22">
+                </div>
+            </div>
+            
+            <div class="button-container">
+                <button id="genereerButton">Genereer AI-Rapport</button>
+            </div>
+
+            <div id="resultaatContainer" class="resultaat-container" style="display: none;">
+                <h2>Uw Rapport</h2>
+                <div id="rapportOutput">
+                    </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
