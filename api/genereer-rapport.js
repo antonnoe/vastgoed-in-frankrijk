@@ -36,11 +36,11 @@ export default async function handler(request, response) {
     };
 
     try {
-        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - DE SIMPELE METHODE) ---
+        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - DE JUISTE URL v11) ---
         
-        // DE REPARATIE: Plak alles in één 'q' string. Geen 'type' filters. Geen 'city' filters.
+        // DE REPARATIE: We gebruiken de JUISTE server: data.geopf.fr
         const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
-        const adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
+        const adresUrl = `https://data.geopf.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
         
         const adresData = await fetchAPI(adresUrl);
         const gevondenAdres = adresData?.features?.[0];
