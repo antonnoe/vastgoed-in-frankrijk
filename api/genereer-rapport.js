@@ -47,9 +47,7 @@ export default async function handler(request, response) {
 
     try {
         // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - SIMPELE METHODE) ---
-        
-        // DE REPARATIE: We plakken alles aan elkaar tot één string.
-        // We sturen NIET langer "city=" of "postcode=". Alleen "q=".
+        // We plakken alles aan elkaar tot één string.
         const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
         const adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
         
@@ -103,6 +101,6 @@ export default async function handler(request, response) {
 
     } catch (error) {
         console.error("Onverwachte fout in API-motor:", error);
-        return response.status(5Openingstijden) .json({ error: `Interne serverfout: ${error.message}` });
+        return response.status(500).json({ error: `Interne serverfout: ${error.message}` });
     }
 }
