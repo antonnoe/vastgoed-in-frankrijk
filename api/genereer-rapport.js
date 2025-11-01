@@ -1,58 +1,45 @@
-// Dit is onze "server-motor" (ES Module Stijl, met import)
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-// Haal onze ENIGE geheime API-sleutel op
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-
-// Initialiseer de AI
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// Dit is onze "Hybride Motor" (ES Module Stijl, met import)
+// HET DOEL: Alleen automatiseerbare data ophalen. DE AI WORDT HIER NIET AANGEROEPEN.
 
 // Hulpfunctie om externe APIs aan te roepen
 async function fetchAPI(url, options = {}) {
     try {
         const response = await fetch(url, options);
         if (!response.ok) {
-            const errorText = await response.text(); // Lees de fout als tekst
+            const errorText = await response.text();
             throw new Error(`API call failed: ${response.status} ${response.statusText} - ${errorText}`);
         }
         return await response.json();
     } catch (error) {
         console.error(`Fout bij ophalen ${url}:`, error.message);
-        return null; // Geef null terug bij een fout
+        return null;
     }
 }
 
 // --- De Hoofdfunctie ---
-// Dit is de handler, nu met "export default"
 export default async function handler(request, response) {
     // 1. Check of het een POST-verzoek is
     if (request.method !== 'POST') {
         return response.status(405).json({ error: 'Alleen POST-verzoeken zijn toegestaan' });
     }
 
-    // 2. Controleer of de Gemini API-sleutel is ingesteld in Vercel
-    if (!GEMINI_API_KEY) {
-        console.error("Gemini API-sleutel ontbreekt!");
-        return response.status(500).json({ error: "Serverconfiguratiefout: API-sleutel ontbreekt." });
-    }
-
-    // 3. Haal de adresgegevens uit de aanvraag
+    // 2. Haal de adresgegevens uit de aanvraag
     const { plaats, postcode, straat, huisnummer } = request.body;
     if (!plaats) {
         return response.status(400).json({ error: 'Plaatsnaam is verplicht' });
     }
 
-    let ruwDossier = {}; // Hier verzamelen we alle data
+    let automatischDossier = {
+        adres: "Niet gevonden",
+        georisques: "Niet opgehaald",
+        dvf: "Niet opgehaald"
+    };
 
     try {
-        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - SLIMME METHODE v8) ---
-        
-        // DE REPARATIE: We plakken alles in één 'q' string...
+        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - v8) ---
         const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
         let adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
         
-        // ...en we voegen een 'type' filter toe gebaseerd op de invoer
         if (straat || huisnummer) {
             adresUrl += `&type=housenumber`; // Zoek een specifiek adres
         } else {
@@ -63,49 +50,38 @@ export default async function handler(request, response) {
         const gevondenAdres = adresData?.features?.[0];
         
         if (!gevondenAdres) {
-            // De Franse API kon de *hele* string niet vinden.
             return response.status(404).json({ error: `Adres niet gevonden via Franse API (Géoplateforme). De API kon niets vinden met de zoekterm: "${queryParts}"` });
         }
         
-        const { coordinates } = gevondenAdres.geometry;
-        const [lon, lat] = coordinates;
-        const kadasterId = gevondenAdres.properties.cadastral_parcel_id; 
+        const [lon, lat] = gevondenAdres.geometry.coordinates;
+        const kadasterId = gevondenAdres.properties.cadastral_parcel_id;
         
-        ruwDossier.adres = `Gevonden officieel adres: ${gevondenAdres.properties.label}`;
-        ruwDossier.kadasterId = kadasterId || "Geen kadaster ID gevonden voor dit adres.";
-
+        automatischDossier.adres = `Gevonden officieel adres: ${gevondenAdres.properties.label}`;
 
         // --- STAP B: Risico's Ophalen (API Géorisques) ---
         const georisquesUrl = `https://api.georisques.gouv.fr/api/v1/zonages?lat=${lat}&lon=${lon}&radius=10&page=1&page_size=100`;
         const risicoData = await fetchAPI(georisquesUrl);
-        ruwDossier.georisques = risicoData?.data || "Geen directe risico's gevonden.";
+        if (risicoData?.data?.length > 0) {
+             automatischDossier.georisques = JSON.stringify(risicoData.data, null, 2);
+        } else {
+            automatischDossier.georisques = "Geen directe risico's gevonden in de database.";
+        }
 
         // --- STAP C: Verkopen Ophalen (API DVF) ---
         if (kadasterId) {
             const dvfUrl = `https://api.dvf.etalab.gouv.fr/api/latest/mutations?parcelle_id=${kadasterId}&around=500&limit=5`;
             const dvfData = await fetchAPI(dvfUrl);
-            ruwDDossier.dvf = dvfData?.mutations || "Geen recente verkopen gevonden op/rond dit perceel.";
+            if (dvfData?.mutations?.length > 0) {
+                automatischDossier.dvf = JSON.stringify(dvfData.mutations, null, 2);
+            } else {
+                automatischDossier.dvf = "Geen recente verkopen gevonden op/rond dit perceel.";
+            }
         } else {
-            ruwDossier.dvf = "Kon DVF niet controleren omdat er geen kadaster ID werd gevonden.";
+            automatischDossier.dvf = "Kon DVF niet controleren omdat er geen kadaster ID werd gevonden.";
         }
 
-        // --- STAP D: Stuur alles naar de AI voor Analyse ---
-        const prompt = `
-            Je bent een expert in Frans vastgoed en adviseert een Nederlandse koper.
-            Analyseer het volgende ruwe, technische dossier voor een leek.
-            Schrijf een helder, beknopt rapport in het Nederlands.
-            Begin met het officiële adres.
-            Focus op "Red Flags" en "Kansen".
-
-            RUW DOSSIER:
-            ${JSON.stringify(ruwDossier, null, 2)}
-        `;
-
-        const result = await model.generateContent(prompt);
-        const aiRapport = await result.response.text();
-
-        // 4. Stuur het definitieve rapport terug naar de gebruiker
-        return response.status(200).json({ rapport: aiRapport });
+        // 4. Stuur het AUTOMATISCHE dossier terug naar de "voorkant"
+        return response.status(200).json(automatischDossier);
 
     } catch (error) {
         console.error("Onverwachte fout in API-motor:", error);
