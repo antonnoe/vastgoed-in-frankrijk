@@ -1,5 +1,5 @@
-// Dit is onze "Hybride Motor" (v13 - Correcte API Logica)
-// HET DOEL: Zowel specifieke als gemeentebrede data ophalen.
+// Dit is onze "Hybride Motor" (v14 - Anti-Fragiele Fallback)
+// HET DOEL: Zorgen dat we *altijd* een INSEE-code hebben.
 
 // Hulpfunctie om externe APIs aan te roepen
 async function fetchAPI(url, options = {}) {
@@ -34,6 +34,11 @@ export default async function handler(request, response) {
         georisques: "Niet opgehaald",
         dvf: "Niet opgehaald"
     };
+    
+    let inseeCode = null;
+    let kadasterId = null;
+    let lon = null;
+    let lat = null;
 
     try {
         // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME) ---
@@ -47,16 +52,33 @@ export default async function handler(request, response) {
             return response.status(404).json({ error: `Adres niet gevonden via Franse API (Géoplateforme). De API kon niets vinden met de zoekterm: "${queryParts}"` });
         }
         
-        // DE SLEUTELS: We pakken nu ALLES wat we kunnen krijgen
-        const [lon, lat] = gevondenAdres.geometry.coordinates;
-        const kadasterId = gevondenAdres.properties.cadastral_parcel_id;
-        const inseeCode = gevondenAdres.properties.citycode; // De gemeente-ID, bv. 62585
-        
+        // Pak de data die we hebben
+        [lon, lat] = gevondenAdres.geometry.coordinates;
+        kadasterId = gevondenAdres.properties.cadastral_parcel_id;
+        inseeCode = gevondenAdres.properties.citycode; // De gemeente-ID, bv. 62585
         automatischDossier.adres = `Gevonden officieel adres: ${gevondenAdres.properties.label}`;
 
-        // --- STAP B: Risico's Ophalen (DE "CHATGPT" METHODE - GECORRIGEERD) ---
-        // We gebruiken de INSEE code om ALLE risico's van de GEMEENTE op te halen.
-        // DIT IS DE CORRECTE API VOOR NATUURRAMPEN (Cat Nat)
+        // --- STAP A.2: DE ANTI-FRAGIELE FALLBACK ---
+        // Als de Adres API geen INSEE code teruggeeft (zoals in uw test gebeurde),
+        // doen we een TWEEDE aanroep om de INSEE code van de GEMEENTE op te halen.
+        if (!inseeCode) {
+            automatischDossier.adres += "\n(Waarschuwing: Specifiek adres gaf geen INSEE code, fallback naar gemeente-zoekopdracht...)";
+            const gemeenteQuery = [postcode, plaats].filter(Boolean).join(' ');
+            const gemeenteUrl = `https://data.geopf.fr/geocodage/search?q=${encodeURIComponent(gemeenteQuery)}&type=municipality&limit=1`;
+            
+            const gemeenteData = await fetchAPI(gemeenteUrl);
+            const gevondenGemeente = gemeenteData?.features?.[0];
+            
+            if (gevondenGemeente) {
+                inseeCode = gevondenGemeente.properties.citycode; // We hebben de INSEE code gered!
+            } else {
+                 return response.status(404).json({ error: `Adres wel gevonden, but kon de GEMEENTE INSEE code niet vinden voor: "${gemeenteQuery}"` });
+            }
+        }
+
+
+        // --- STAP B: Risico's Ophalen (DE "CHATGPT" METHODE) ---
+        // We gebruiken de (nu gegarandeerde) INSEE code.
         const georisquesUrl = `https://api.georisques.gouv.fr/api/v1/catnat?code_insee=${inseeCode}&page=1&page_size=10`; // Pak de 10 laatste events
         const risicoData = await fetchAPI(georisquesUrl);
         
@@ -67,7 +89,7 @@ export default async function handler(request, response) {
             automatischDossier.georisques = "Geen erkende natuurrampen ('Cat Nat') gevonden voor deze gemeente.";
         }
 
-        // --- STAP C: Verkopen Ophalen (DE FALLBACK METHODE - GECORRIGEERD) ---
+        // --- STAP C: Verkopen Ophalen (DE FALLBACK METHODE) ---
         let dvfData = null;
         if (kadasterId) {
             // Plan A: Zoek op het specifieke perceel
@@ -78,7 +100,6 @@ export default async function handler(request, response) {
         // Plan B: Als Plan A faalt (geen kadasterId of geen resultaten), zoek in de hele gemeente
         if (!dvfData || !dvfData.mutations || dvfData.mutations.length === 0) {
             automatischDossier.dvf = "Geen verkopen gevonden op het specifieke perceel. Bezig met zoeken in de hele gemeente...\n\n";
-            // DIT IS DE CORRECTE FALLBACK API AANROEP
             const dvfGemeenteUrl = `https://api.dvf.etalab.gouv.fr/api/latest/stats/commune?code_insee=${inseeCode}`; 
             const dvfStats = await fetchAPI(dvfGemeenteUrl);
 
