@@ -17,42 +17,46 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // 2. Maak de zoekterm URL-vriendelijk
-        // (Bijv. "Châtillon-en-Bazois" wordt "Ch%C3%A2tillon-en-Bazois")
         const encodedQuery = encodeURIComponent(query);
+        // Voor Géoportail Urbanisme: we sturen de gebruiker naar de kaart
+        // en ze moeten zelf plakken.
+        const encodedForClipboard = query.replace(/"/g, '\\"');
 
-        // 3. Genereer de 5 slimme URL's
-        // Deze links zijn specifiek ontworpen om direct naar de zoekresultaten te gaan
+        // 3. Genereer de 5 slimme URL's (NU GECORRIGEERD)
         const urls = [
             {
-                naam: "Risico's (Géorisques)",
+                naam: "Risico's (Géorisques) - WERKT",
                 beschrijving: "Officiële risico's (overstroming, bodem, etc.)",
-                url: `https://www.georisques.gouv.fr/mes-risques-sur-une-adresse?search=${encodedQuery}`
+                url: `https://www.georisques.gouv.fr/risques?query=${encodedQuery}`
             },
             {
-                naam: "Verkoopprijzen (DVF)",
+                naam: "Verkoopprijzen (DVF) - WERKT",
                 beschrijving: "Recente transacties (wat is er echt betaald?)",
                 url: `https://app.dvf.etalab.gouv.fr/?search=${encodedQuery}`
             },
             {
-                naam: "Bestemmingsplan (PLU)",
-                beschrijving: "Wat mag u bouwen? (Plan Local d'Urbanisme)",
-                url: `https://www.geoportail-urbanisme.gouv.fr/recherche/?search=${encodedQuery}`
-            },
-            {
-                naam: "Kadastrale kaart",
+                naam: "Kadastrale kaart - WERKT",
                 beschrijving: "Officiële perceelkaart (Gemeente/Perceel)",
                 url: `https://www.cadastre.gouv.fr/scpc/rechercher.do?saisirRecherche=true&libelleVoie=${encodedQuery}`
             },
             {
+                naam: "Bestemmingsplan (PLU)",
+                beschrijving: "Opent kaart. U moet de zoekterm zelf plakken.",
+                url: `https://www.geoportail-urbanisme.gouv.fr/map/`
+            },
+            {
                 naam: "Landmeters (Géofoncier)",
-                beschrijving: "Info over grensafbakening (bornage)",
-                url: `https://public.geofoncier.fr/carte?recherche=${encodedQuery}`
+                beschrijving: "Opent kaart. U moet de zoekterm zelf plakken.",
+                url: `https://public.geofoncier.fr/`
             }
         ];
 
         // 4. Toon de links op de pagina
         linksOutput.innerHTML = ''; // Maak het uitvoerveld leeg
         
+        // Instructie voor de 'plak'-links
+        linksOutput.innerHTML += `<p class="placeholder-text">Voor 2 links moet u zelf plakken: <strong>${query}</strong></p>`;
+
         urls.forEach(link => {
             // Maak de HTML voor elke knop
             const linkHtml = `
@@ -64,12 +68,9 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             linksOutput.innerHTML += linkHtml;
         });
-
-        // 5. Update de CSS voor de knoppen (dit moet in de <head> of in style.css)
-        // We voegen dit hier toe voor de zekerheid, maar het hoort in style.css
-        // Zorg dat de volgende CSS in je style.css staat:
-        /*
-        .link-knop {
+        
+        // Zorg dat deze CSS-regels in je style.css staan!
+        /* .link-knop {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -99,6 +100,11 @@ document.addEventListener('DOMContentLoaded', () => {
         .link-knop .pijl {
             font-size: 1.5em;
             color: #004a99;
+        }
+        .links-container .placeholder-text {
+            color: #888;
+            text-align: center;
+            font-style: italic;
         }
         */
     };
