@@ -38,10 +38,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ plaats, postcode, straat, huisnummer }),
             });
 
+            // GECORRIGEERDE FOUTAFHANDELING
             if (!response.ok) {
-                // Toon de foutmelding van de server
-                const errorData = await response.json();
-                throw new Error(errorData.error || `Serverfout: ${response.status}`);
+                // Probeer de fout als JSON te lezen, maar als dat mislukt, lees het als tekst.
+                let errorMsg = `Serverfout: ${response.status}`;
+                try {
+                    const errorData = await response.json();
+                    errorMsg = errorData.error || errorMsg;
+                } catch (e) {
+                    // De fout was geen JSON (waarschijnlijk HTML), lees als tekst
+                    errorMsg = await response.text(); 
+                }
+                throw new Error(errorMsg);
             }
 
             // 4. Ontvang en toon het AI-rapport
