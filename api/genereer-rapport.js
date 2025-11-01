@@ -44,18 +44,21 @@ export default async function handler(request, response) {
     }
 
     let ruwDossier = {}; // Hier verzamelen we alle data
+    let adresUrl = '';
+    let queryParts = '';
 
     try {
-        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - SLIMME METHODE v2) ---
+        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - SLIMME METHODE v3) ---
         
-        // We plakken alles aan elkaar tot één string.
-        const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
-        
-        // DE REPARATIE: We voegen de 'type=municipality' parameter toe
-        // als de gebruiker GEEN straat of huisnummer heeft ingevuld.
-        let adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
-        if (!straat && !huisnummer) {
-             adresUrl += `&type=municipality`; // Zoek naar een gemeente
+        // DE REPARATIE: We splitsen de logica
+        if (straat) {
+            // LOGICA 1: GEBRUIKER ZOEKT EEN SPECIFIEK ADRES
+            queryParts = [huisnummer, straat].filter(Boolean).join(' ');
+            adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&city=${encodeURIComponent(plaats)}&postcode=${encodeURIComponent(postcode)}&limit=1`;
+        } else {
+            // LOGICA 2: GEBRUIKER ZOEKT ALLEEN EEN GEMEENTE
+            queryParts = [plaats, postcode].filter(Boolean).join(' ');
+            adresUrl = `https://geoservices.ign.fr/geocodage/search?q=${encodeURIComponent(plaats)}&postcode=${encodeURIComponent(postcode)}&type=municipality&limit=1`;
         }
         
         const adresData = await fetchAPI(adresUrl);
