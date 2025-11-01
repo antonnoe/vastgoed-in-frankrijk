@@ -1,5 +1,5 @@
-// Dit is onze "Hybride Motor" (ES Module Stijl)
-// HET DOEL: Alleen automatiseerbare data ophalen.
+// Dit is onze "Hybride Motor" (v12 - Duale Logica)
+// HET DOEL: Zowel specifieke als gemeentebrede data ophalen.
 
 // Hulpfunctie om externe APIs aan te roepen
 async function fetchAPI(url, options = {}) {
@@ -36,11 +36,9 @@ export default async function handler(request, response) {
     };
 
     try {
-        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME - DE JUISTE URL v11) ---
-        
-        // DE REPARATIE: We gebruiken de JUISTE server: data.geopf.fr
+        // --- STAP A: Adres Standaardiseren (GÉOPLATEFORME) ---
         const queryParts = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
-        const adresUrl = `https://data.geopf.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
+        let adresUrl = `https://data.geopf.fr/geocodage/search?q=${encodeURIComponent(queryParts)}&limit=1`;
         
         const adresData = await fetchAPI(adresUrl);
         const gevondenAdres = adresData?.features?.[0];
@@ -49,31 +47,44 @@ export default async function handler(request, response) {
             return response.status(404).json({ error: `Adres niet gevonden via Franse API (Géoplateforme). De API kon niets vinden met de zoekterm: "${queryParts}"` });
         }
         
+        // DE SLEUTELS: We pakken nu ALLES wat we kunnen krijgen
         const [lon, lat] = gevondenAdres.geometry.coordinates;
         const kadasterId = gevondenAdres.properties.cadastral_parcel_id;
+        const inseeCode = gevondenAdres.properties.citycode; // De gemeente-ID, bv. 62585
         
         automatischDossier.adres = `Gevonden officieel adres: ${gevondenAdres.properties.label}`;
 
-        // --- STAP B: Risico's Ophalen (API Géorisques) ---
-        const georisquesUrl = `https://api.georisques.gouv.fr/api/v1/zonages?lat=${lat}&lon=${lon}&radius=10&page=1&page_size=100`;
+        // --- STAP B: Risico's Ophalen (DE "CHATGPT" METHODE) ---
+        // We gebruiken de INSEE code om ALLE risico's van de GEMEENTE op te halen.
+        const georisquesUrl = `https://api.georisques.gouv.fr/api/v1/risques?code_insee=${inseeCode}`;
         const risicoData = await fetchAPI(georisquesUrl);
         if (risicoData?.data?.length > 0) {
              automatischDossier.georisques = JSON.stringify(risicoData.data, null, 2);
         } else {
-            automatischDossier.georisques = "Geen directe risico's gevonden in de database.";
+            automatischDossier.georisques = "Geen gemeentebrede risico's gevonden in de database.";
         }
 
-        // --- STAP C: Verkopen Ophalen (API DVF) ---
+        // --- STAP C: Verkopen Ophalen (DE FALLBACK METHODE) ---
+        let dvfData = null;
         if (kadasterId) {
-            const dvfUrl = `https://api.dvf.etalab.gouv.fr/api/latest/mutations?parcelle_id=${kadasterId}&around=500&limit=5`;
-            const dvfData = await fetchAPI(dvfUrl);
+            // Plan A: Zoek op het specifieke perceel
+            const dvfPerceelUrl = `https://api.dvf.etalab.gouv.fr/api/latest/mutations?parcelle_id=${kadasterId}&around=500&limit=5`;
+            dvfData = await fetchAPI(dvfPerceelUrl);
+        }
+        
+        // Plan B: Als Plan A faalt (geen kadasterId of geen resultaten), zoek in de hele gemeente
+        if (!dvfData || !dvfData.mutations || dvfData.mutations.length === 0) {
+            automatischDossier.dvf = "Geen verkopen gevonden op het specifieke perceel. Bezig met zoeken in de hele gemeente...\n\n";
+            const dvfGemeenteUrl = `https://api.dvf.etalab.gouv.fr/api/latest/mutations?code_insee=${inseeCode}&limit=10`; // Pak de 10 laatste in de gemeente
+            dvfData = await fetchAPI(dvfGemeenteUrl);
+            
             if (dvfData?.mutations?.length > 0) {
-                automatischDossier.dvf = JSON.stringify(dvfData.mutations, null, 2);
+                 automatischDossier.dvf += JSON.stringify(dvfData.mutations, null, 2);
             } else {
-                automatischDossier.dvf = "Geen recente verkopen gevonden op/rond dit perceel.";
+                 automatischDossier.dvf = "Kon DVF niet controleren (geen kadaster ID) en ook geen verkopen gevonden in de hele gemeente.";
             }
         } else {
-            automatischDossier.dvf = "Kon DVF niet controleren omdat er geen kadaster ID werd gevonden.";
+             automatischDossier.dvf = "Verkopen gevonden op/rond het specifieke perceel:\n\n" + JSON.stringify(dvfData.mutations, null, 2);
         }
 
         // 4. Stuur het AUTOMATISCHE dossier terug naar de "voorkant"
