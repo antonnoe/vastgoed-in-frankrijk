@@ -3,129 +3,121 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Immodiagnostique – Frans Vastgoed Kompas</title>
+  <title>Immodiagnostique – Frans vastgoed kompas</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-
+  <!-- bovenbalk -->
   <header class="topbar">
     <div class="brand">
       <div class="logo-icon"></div>
       <div class="brand-text">
         <div class="logo-text">IMMODIAGNOSTIQUE</div>
-        <div class="subtext">Een concept van Infofrankrijk.com</div>
+        <div class="subtext">een concept van Infofrankrijk.com</div>
       </div>
     </div>
-    <p class="tagline">Hybride due diligence voor kopers & nieuwsgierige eigenaars</p>
+    <p class="tagline">Hybride due diligence voor kopers & eigenaars</p>
   </header>
 
   <main class="outer">
     <section class="app-card">
       <div class="tab-buttons">
-        <button class="tab-button active" id="tab-dossier">1. Dossier</button>
-        <button class="tab-button" id="tab-help">2. Uitleg / risico & notaris</button>
+        <button class="tab-button active" type="button">1. Dossier maken</button>
       </div>
 
-      <!-- TAB 1: DOSSIER -->
-      <div id="DossierDashboard" class="tab-content active">
-        <h2>Voer het object in</h2>
-        <p class="small">Optie A: plak een advertentielink. Optie B: vul adres in. Minimaal de plaats.</p>
+      <div class="tab-content" id="DossierDashboard">
+        <h2>Adres of advertentielink</h2>
+        <p class="small">
+          Vul óf een Frans adres in, óf plak een link van bijv. Green-Acres. Wij maken de onderzoeksprompt voor je.
+        </p>
 
         <div class="form-grid">
           <div class="input-veld">
-            <label for="advertLinkInput">Advertentielink (bijv. Green-Acres)</label>
-            <input id="advertLinkInput" type="text" placeholder="https://www.green-acres.fr/...">
+            <label for="advertLinkInput">Advertentie-URL (optioneel)</label>
+            <input id="advertLinkInput" type="text" placeholder="https://www.green-acres.fr/..." />
           </div>
           <div class="input-veld">
-            <label for="plaatsInput">Plaatsnaam (verplicht)</label>
-            <input id="plaatsInput" type="text" placeholder="Bijv. Biarritz">
+            <label for="plaatsInput">Plaatsnaam (verplicht als geen URL)</label>
+            <input id="plaatsInput" type="text" placeholder="Bijv. Biarritz" />
           </div>
           <div class="input-veld">
             <label for="postcodeInput">Postcode</label>
-            <input id="postcodeInput" type="text" placeholder="64200">
+            <input id="postcodeInput" type="text" placeholder="64200" />
           </div>
           <div class="input-veld">
-            <label for="straatInput">Straatnaam</label>
-            <input id="straatInput" type="text" placeholder="Rue Pasteur">
+            <label for="straatInput">Straat</label>
+            <input id="straatInput" type="text" placeholder="Rue Pasteur" />
           </div>
           <div class="input-veld">
-            <label for="huisnummerInput">Huisnummer</label>
-            <input id="huisnummerInput" type="text" placeholder="999">
+            <label for="huisnummerInput">Nr.</label>
+            <input id="huisnummerInput" type="text" placeholder="999" />
           </div>
         </div>
 
         <div class="button-container">
-          <button id="genereerButton" class="primary-btn">Genereer dossier</button>
+          <button id="genereerButton" class="primary-btn" type="button">
+            Genereer dossier
+          </button>
         </div>
 
-        <div id="dashboardTegels" class="tegels-container" style="display:none;">
+        <div id="dashboardTegels" class="tegels-container" style="display: none;">
           <div class="tegel">
-            <div class="tegel-header"><h3>1. Adres / bron</h3></div>
+            <div class="tegel-header"><h3>Adres / advertentie</h3></div>
             <div class="tegel-body">
               <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
             </div>
           </div>
-
           <div class="tegel">
-            <div class="tegel-header"><h3>2. Géorisques</h3></div>
+            <div class="tegel-header"><h3>Géorisques</h3></div>
             <div class="tegel-body">
               <textarea id="notes-risques" class="tegel-textarea"></textarea>
             </div>
           </div>
-
           <div class="tegel">
-            <div class="tegel-header"><h3>3. DVF / prijzen</h3></div>
+            <div class="tegel-header"><h3>DVF / prijzen</h3></div>
             <div class="tegel-body">
               <textarea id="notes-dvf" class="tegel-textarea"></textarea>
             </div>
           </div>
-
           <div class="tegel">
-            <div class="tegel-header"><h3>4. PLU / servitudes</h3></div>
+            <div class="tegel-header"><h3>PLU / servitudes</h3></div>
             <div class="tegel-body">
-              <textarea id="notes-plu" class="tegel-textarea" placeholder="Noteer zone, SUP, evt. fosse, tout-à-l’égout..."></textarea>
+              <textarea id="notes-plu" class="tegel-textarea"></textarea>
             </div>
           </div>
         </div>
 
-        <div id="actieKnoppenContainer" class="actie-knoppen" style="display:none;">
-          <button id="promptButton" class="primary-btn">🧠 Genereer AI-prompt</button>
+        <div id="actieKnoppenContainer" class="actie-knoppen" style="display: none;">
+          <button id="promptButton" class="primary-btn" type="button">
+            🚀 Maak AI-prompt
+          </button>
         </div>
 
         <p class="disclaimer">
-          Deze tool maakt alleen een voorbeoordeling op basis van openbare Franse bronnen (géorisques, DVF, PLU). <strong>Alleen de notaris</strong> kan een volledig en juridisch bindend dossier leveren. Gebruik de gegenereerde tekst als gesprekstarter.
+          Let op: deze tool is een <strong>voorbereidende</strong> analyse. Raadpleeg altijd de notaris
+          (ERP &lt; 6 maanden, PLU/PLUi, servitudes, assainissement). Immodiagnostique geeft geen juridisch advies.
         </p>
-      </div>
-
-      <!-- TAB 2: HELP -->
-      <div id="HelpTab" class="tab-content" style="display:none;">
-        <h2>Hoe gebruik je Immodiagnostique?</h2>
-        <p class="small">
-          1) Plak advertentie of voer adres in. 2) Open de Franse sites. 3) Plak bevindingen. 4) Laat AI er een rapport + Franse notarisvraag van maken. <br>
-          Dit is géén vervanging van ERP & diagnostics.
-        </p>
-        <ul class="small">
-          <li><strong>ERP verplicht</strong>: altijd < 6 maanden.</li>
-          <li><strong>DVF traag?</strong> → data.gouv.fr.</li>
-          <li><strong>PLU ontbreekt?</strong> → mairie / intercommunalité.</li>
-        </ul>
       </div>
     </section>
+
+    <!-- plek waar AI-antwoord komt -->
+    <div id="aiResult" class="ai-result" style="margin-top:1rem;"></div>
   </main>
 
-  <!-- MODAL AI -->
+  <!-- modal met de gegenereerde prompt -->
   <div id="promptModal" class="modal">
     <div class="modal-content">
-      <span class="modal-close" id="modalClose">&times;</span>
-      <h3>AI-prompt klaar</h3>
-      <p class="small">Je kunt de tekst hieronder NIET bewerken. Verstuur ’m naar de AI-module.</p>
+      <span id="modalClose" class="modal-close">&times;</span>
+      <h2>Gegenereerde prompt</h2>
+      <p class="small">
+        Dit is de tekst die we naar de AI sturen. Je kunt hem lezen, niet wijzigen.
+      </p>
       <textarea id="promptOutput" readonly></textarea>
       <div class="ai-actions">
-        <button id="kopieerPromptButton">Kopieer naar klembord</button>
-        <!-- deze knop plakt script.js er zelf bij -->
+        <button id="kopieerPromptButton" type="button">Kopieer prompt</button>
+        <!-- script.js hangt hier “👍 Verstuur naar AI” bij -->
       </div>
-      <h4 style="margin-top:1rem;">AI-antwoord</h4>
-      <div id="aiResult" class="ai-result">Nog geen AI-analyse.</div>
+      <div id="aiResult" class="ai-result"></div>
     </div>
   </div>
 
