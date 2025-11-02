@@ -2,26 +2,21 @@
 document.addEventListener('DOMContentLoaded', () => {
   const genereerButton = document.getElementById('genereerButton');
 
-  // adres-velden
   const plaatsInput = document.getElementById('plaatsInput');
   const postcodeInput = document.getElementById('postcodeInput');
   const straatInput = document.getElementById('straatInput');
   const huisnummerInput = document.getElementById('huisnummerInput');
 
-  // advertentie-veld
   const advertLinkInput = document.getElementById('advertLinkInput');
 
-  // dashboard
   const dashboardTegels = document.getElementById('dashboardTegels');
   const actieKnoppenContainer = document.getElementById('actieKnoppenContainer');
 
-  // tegels
   const notesAdres = document.getElementById('notes-adres');
   const notesRisques = document.getElementById('notes-risques');
   const notesDvf = document.getElementById('notes-dvf');
   const notesPlu = document.getElementById('notes-plu');
 
-  // prompt / modal
   const promptButton = document.getElementById('promptButton');
   const promptModal = document.getElementById('promptModal');
   const modalClose = document.getElementById('modalClose');
@@ -33,12 +28,10 @@ document.addEventListener('DOMContentLoaded', () => {
     return word.charAt(0).toUpperCase() + word.slice(1);
   }
 
-  // stad uit green-acres-URL halen
   function extractCityFromGreenAcres(url) {
     try {
       const u = new URL(url);
       const parts = u.pathname.split('/').filter(Boolean);
-      // fr/properties/.../STAD/...
       if (parts.length >= 4) {
         const maybeCity = parts[3];
         return capitalize(maybeCity.replace(/-/g, ' '));
@@ -49,7 +42,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // hoofdknop
   genereerButton.addEventListener('click', () => {
     const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
     let plaats = plaatsInput.value.trim();
@@ -57,7 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const straat = straatInput.value.trim();
     const huisnummer = huisnummerInput.value.trim();
 
-    // 1) advertentie-modus
+    // ADVERTENTIE-MODUS
     if (advertUrl) {
       if (!plaats) {
         const guessed = extractCityFromGreenAcres(advertUrl);
@@ -105,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // 2) adres-modus
+    // ADRES-MODUS
     if (!plaats) {
       alert('Plaatsnaam is verplicht');
       return;
@@ -135,7 +127,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // prompt → modal
   if (promptButton) {
     promptButton.addEventListener('click', () => {
       const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
@@ -165,7 +156,6 @@ ${notesAdres.value || 'Geen kadastrale info.'}
 ${notesPlu.value || 'Nog niet gecontroleerd.'}
       `.trim();
 
-      // strengere prompt
       const finalPrompt = `
 Je mag ALLEEN werken met de info hieronder. NIET zelf extra Franse bronnen, telefoonnummers, gemeenten, prijzen, PPR’s of openingstijden verzinnen.
 
@@ -184,7 +174,6 @@ ${dossier}
       promptOutput.value = finalPrompt;
       promptModal.style.display = 'block';
 
-      // stuurknop
       let sendBtn = document.getElementById('sendToAiButton');
       if (!sendBtn) {
         sendBtn = document.createElement('button');
@@ -202,15 +191,22 @@ ${dossier}
               body: JSON.stringify({ dossier: finalPrompt }),
             });
             const data = await resp.json();
+
+            // laat ALTIJD iets zien
             if (!resp.ok) {
               promptOutput.value =
-                finalPrompt + '\n\n--- AI FOUT ---\n' + (data.error || 'Onbekende fout');
+                finalPrompt +
+                '\n\n--- AI FOUT ---\n' +
+                (typeof data === 'string' ? data : JSON.stringify(data, null, 2));
             } else {
               promptOutput.value =
-                finalPrompt + '\n\n--- AI-ANALYSE ---\n' + (data.analysis || 'Geen antwoord.');
+                finalPrompt +
+                '\n\n--- AI-ANALYSE ---\n' +
+                (data.analysis || '⚠️ lege analyse ontvangen');
             }
           } catch (e) {
-            promptOutput.value = finalPrompt + '\n\n--- AI FOUT ---\n' + e.message;
+            promptOutput.value =
+              finalPrompt + '\n\n--- AI FOUT (JS) ---\n' + (e?.message || String(e));
           } finally {
             sendBtn.textContent = '👍 Verstuur naar AI';
           }
@@ -219,7 +215,6 @@ ${dossier}
     });
   }
 
-  // modal sluiten
   if (modalClose) {
     modalClose.addEventListener('click', () => {
       promptModal.style.display = 'none';
@@ -231,7 +226,6 @@ ${dossier}
     }
   });
 
-  // kopieerknop
   if (kopieerPromptButton) {
     kopieerPromptButton.addEventListener('click', () => {
       promptOutput.select();
