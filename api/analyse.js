@@ -1,28 +1,42 @@
 // api/analyse.js
 export const config = { runtime: 'nodejs' };
 
+const DISCLAIMER = `
+---
+Immodiagnostique — consumentenhulpmiddel (bèta).
+Dit is géén vervanging van het verplichte ERP (< 6 mnd), geen notariële akte
+en geen garantie op verzekerbaarheid. Laat de uitkomst altijd toetsen door
+de Franse notaris / mairie / verzekeraar. Bronlinks: Géorisques, DVF, Géoportail.
+`;
+
 export default async function handler(req, res) {
+  // 1. alleen POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Alleen POST' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY ontbreekt in Vercel' });
-  }
-
+  // 2. prompt/dossier uit body
   const { dossier } = req.body || {};
   if (!dossier) {
-    return res.status(400).json({ error: 'dossier ontbreekt' });
+    return res.status(400).json({ error: 'Geen dossier ontvangen.' });
   }
 
-  // jouw prompt rechtstreeks doorzetten
+  // 3. api key uit env
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({
+      error: 'GEMINI_API_KEY ontbreekt in de Vercel environment.'
+    });
+  }
+
+  // 4. prompt opbouwen (we sturen door wat jij al had)
   const prompt = dossier;
 
+  // 5. naar Gemini sturen
   try {
     const resp = await fetch(
-      // LET OP: nieuw model + nog steeds v1beta
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=' +
+        encodeURIComponent(apiKey),
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -35,18 +49,31 @@ export default async function handler(req, res) {
     const raw = await resp.json();
 
     if (!resp.ok) {
+      // fout van Gemini teruggeven zodat jij het in de UI ziet
       return res.status(resp.status).json({ error: raw });
     }
 
-    const parts = raw?.candidates?.[0]?.content?.parts;
-    const text = Array.isArray(parts)
-      ? parts.map((p) => p.text || '').join('\n').trim()
-      : '';
+    // 6. tekst eruit peuteren
+    const candidate = raw?.candidates?.[0];
+    const parts = candidate?.content?.parts;
+    let text = '';
 
-    return res.status(200).json({
-      analysis: text || '⚠️ AI gaf geen tekst terug.',
-    });
+    if (Array.isArray(parts) && parts.length > 0) {
+      text = parts.map((p) => p.text || '').join('\n').trim();
+    }
+
+    if (!text) {
+      text =
+        '⚠️ AI gaf geen tekst terug. Ruwe respons:\n' +
+        JSON.stringify(raw, null, 2);
+    }
+
+    // 7. disclaimer en merknaam er ALTIJD achter
+    const finalText = text + '\n' + DISCLAIMER.trim() + '\n';
+
+    return res.status(200).json({ analysis: finalText });
   } catch (e) {
+    // 8. echte serverfout
     return res.status(500).json({ error: e.message });
   }
 }
