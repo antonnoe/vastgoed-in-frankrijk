@@ -1,162 +1,118 @@
-<!-- public/index.html -->
 <!DOCTYPE html>
 <html lang="nl">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Het Franse Vastgoed Kompas</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Het Franse Vastgoed Kompas</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <header>
+    <h1>Het Franse Vastgoed Kompas</h1>
+    <p>Uw Hybride Due Diligence Tool</p>
+  </header>
 
-    <!-- BOVENSTE BANNER -->
-    <div style="background:#800000;color:#fff;padding:1.5rem 1rem;">
-      <div style="max-width:1100px;margin:0 auto;display:flex;gap:1rem;flex-wrap:wrap;align-items:center;">
-        <div style="flex:1 1 280px;">
-          <h1 style="margin:0 0 .35rem 0;font-size:1.5rem;">Vastgoed in Frankrijk</h1>
-          <p style="margin:0;opacity:.9;">Start met een adres óf met een advertentielink.</p>
+  <div class="tab-container">
+    <div class="tab-buttons">
+      <button class="tab-button active">Hybride Dossier Generator</button>
+    </div>
+
+    <div id="DossierDashboard" class="tab-content active">
+      <h2>Stap 1: Genereer het dossier</h2>
+      <p>Vul óf een adres in, óf plak een advertentielink.</p>
+
+      <div class="form-grid">
+        <div class="input-veld">
+          <label for="advertLinkInput">Advertentielink (optioneel)</label>
+          <input
+            type="text"
+            id="advertLinkInput"
+            placeholder="https://www.green-acres.fr/..."
+          />
         </div>
-        <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
-          <button id="start-adres" style="background:#fff;color:#800000;border:none;padding:.5rem 1rem;border-radius:.4rem;cursor:pointer;font-weight:600;">🏠 Adres invoeren</button>
-          <button id="start-advert" style="background:rgba(255,255,255,.12);color:#fff;border:1px solid #fff;padding:.5rem 1rem;border-radius:.4rem;cursor:pointer;font-weight:500;">🔗 Advertentielink plakken</button>
+        <div class="input-veld">
+          <label for="plaatsInput">Plaatsnaam (verplicht)</label>
+          <input type="text" id="plaatsInput" placeholder="Bijv: Biarritz" />
+        </div>
+        <div class="input-veld">
+          <label for="postcodeInput">Postcode</label>
+          <input type="text" id="postcodeInput" placeholder="Bijv: 64200" />
+        </div>
+        <div class="input-veld">
+          <label for="straatInput">Straatnaam</label>
+          <input type="text" id="straatInput" placeholder="Bijv: Rue Pasteur" />
+        </div>
+        <div class="input-veld">
+          <label for="huisnummerInput">Huisnummer</label>
+          <input type="text" id="huisnummerInput" placeholder="Bijv: 999" />
         </div>
       </div>
-    </div>
 
-    <header>
-        <h1>Het Franse Vastgoed Kompas</h1>
-        <p>Uw Hybride Due Diligence Tool</p>
-    </header>
+      <div class="button-container">
+        <button id="genereerButton">Genereer dossier</button>
+      </div>
 
-    <div class="tab-container">
-        <div class="tab-buttons">
-            <button class="tab-button active">Hybride Dossier Generator</button>
+      <div id="dashboardTegels" class="tegels-container" style="display: none">
+        <div class="tegel">
+          <div class="tegel-header"><h3>1. Officieel adres / advertentie</h3></div>
+          <div class="tegel-body">
+            <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
+          </div>
         </div>
 
-        <div id="DossierDashboard" class="tab-content active">
-            <h2>Stap 1: Genereer het Automatische Dossier</h2>
-            <p>Vul de 4 velden in (plaats is verplicht) óf plak een advertentielink. De tool zet de juiste Franse portals klaar.</p>
-            
-            <!-- ADRES-FORM -->
-            <div class="form-grid" id="adres-form">
-                <div class="input-veld">
-                    <label for="plaatsInput">Plaatsnaam (verplicht)</label>
-                    <input type="text" id="plaatsInput" placeholder="Bijv: Montcavrel">
-                </div>
-                <div class="input-veld">
-                    <label for="postcodeInput">Postcode</label>
-                    <input type="text" id="postcodeInput" placeholder="Bijv: 62170">
-                </div>
-                <div class="input-veld">
-                    <label for="straatInput">Straatnaam</label>
-                    <input type="text" id="straatInput" placeholder="Bijv: Rue de Séhen">
-                </div>
-                <div class="input-veld">
-                    <label for="huisnummerInput">Huisnummer</label>
-                    <input type="text" id="huisnummerInput" placeholder="Bijv: 22">
-                </div>
-            </div>
-
-            <!-- ADVERTENTIE-FORM -->
-            <div class="form-grid" id="advert-form" style="display:none;">
-                <div class="input-veld" style="grid-column:1/-1;">
-                    <label for="advertLinkInput">Advertentielink (Green-Acres, Leboncoin, SeLoger...)</label>
-                    <input type="url" id="advertLinkInput" placeholder="Plak hier de URL van de advertentie">
-                    <p style="margin:.5rem 0 0 0;font-size:.8rem;color:#666;">
-                        Bij Franse advertenties ontbreekt vaak het exacte adres. We schakelen dan naar gemeentelijk niveau.
-                    </p>
-                </div>
-            </div>
-            
-            <div class="button-container">
-                <button id="genereerButton">Genereer Automatisch Dossier</button>
-            </div>
-
-            <div id="dashboardTegels" class="tegels-container" style="display: none;">
-                
-                <div class="tegel">
-                    <div class="tegel-header"><h3>1. Officieel Adres / Invoer</h3></div>
-                    <div class="tegel-body">
-                        <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
-                    </div>
-                </div>
-
-                <div class="tegel">
-                    <div class="tegel-header"><h3>2. Risico's (Géorisques)</h3></div>
-                    <div class="tegel-body">
-                        <textarea id="notes-risques" class="tegel-textarea" readonly></textarea>
-                    </div>
-                </div>
-
-                <div class="tegel">
-                    <div class="tegel-header"><h3>3. Verkoopprijzen (DVF)</h3></div>
-                    <div class="tegel-body">
-                        <textarea id="notes-dvf" class="tegel-textarea" readonly></textarea>
-                    </div>
-                </div>
-
-                <div class="tegel handmatig">
-                    <div class="tegel-header"><h3>4. Bestemmingsplan (PLU)</h3></div>
-                    <div class="tegel-body">
-                        <p>PLU/SUP is vaak niet automatisch. Open het portal en plak de regels hier.</p>
-                        <a href="https://www.geoportail-urbanisme.gouv.fr/map/" class="tegel-knop" target="_blank">Open Bestemmingsplan Kaart</a>
-                        <label for="notes-plu">Plak hier uw bevindingen:</label>
-                        <textarea id="notes-plu" class="tegel-textarea" placeholder="Typ of plak hier de PLU-regels..."></textarea>
-                    </div>
-                </div>
-
-            </div>
-
-            <div id="actieKnoppenContainer" class="actie-knoppen" style="display: none;">
-                <button id="promptButton" class="actie-knop prompt">🚀 Genereer AI-Prompt</button>
-            </div>
-
-            <!-- OFFICIËLE BRONNEN BLOK -->
-            <section style="margin-top:1.5rem;background:#fff;border:1px solid #ddd;border-radius:.5rem;padding:1rem;">
-              <h3 style="margin-top:0;color:#800000;">Officiële Franse bronnen</h3>
-              <p style="margin:0 0 .75rem 0;font-size:.9rem;">Open deze sites handmatig als een bron traag of offline is, of als het adres niet volledig is.</p>
-              <ul style="margin:0;padding-left:1.1rem;line-height:1.5;">
-                <li><a href="https://app.dvf.etalab.gouv.fr/" target="_blank">DVF Etalab (transacties)</a></li>
-                <li><a href="https://www.data.gouv.fr/" target="_blank">data.gouv.fr – DVF dataset</a></li>
-                <li><a href="https://www.geoportail-urbanisme.gouv.fr/map/" target="_blank">Géoportail Urbanisme (PLU / SUP)</a></li>
-                <li><a href="https://www.georisques.gouv.fr/" target="_blank">Géorisques (risico’s / ERP)</a></li>
-                <li><span style="opacity:.6;">MeilleursAgents (alleen raadplegen, geen API)</span></li>
-              </ul>
-            </section>
-
+        <div class="tegel">
+          <div class="tegel-header"><h3>2. Risico's (Géorisques)</h3></div>
+          <div class="tegel-body">
+            <textarea id="notes-risques" class="tegel-textarea" readonly></textarea>
+          </div>
         </div>
-    </div>
 
-    <!-- PROMPT MODAL -->
-    <div id="promptModal" class="modal">
-        <div class="modal-content">
-            <span class="modal-close" id="modalClose">&times;</span>
-            <h2>Uw AI-Prompt is Klaar</h2>
-            <p>Dit is wat er naar de AI gaat. (read-only)</p>
-            <textarea id="promptOutput" readonly></textarea>
-            <button id="kopieerPromptButton">Kopieer naar Klembord</button>
-            <!-- hier komt straks “Verstuur naar AI” -->
+        <div class="tegel">
+          <div class="tegel-header"><h3>3. Verkoopprijzen (DVF)</h3></div>
+          <div class="tegel-body">
+            <textarea id="notes-dvf" class="tegel-textarea" readonly></textarea>
+          </div>
         </div>
+
+        <div class="tegel handmatig">
+          <div class="tegel-header"><h3>4. Bestemmingsplan (PLU)</h3></div>
+          <div class="tegel-body">
+            <p>Controleer zelf in Géoportail en plak hier de regels.</p>
+            <a
+              href="https://www.geoportail-urbanisme.gouv.fr/map/"
+              class="tegel-knop"
+              target="_blank"
+              >Open PLU-kaart</a
+            >
+            <textarea
+              id="notes-plu"
+              class="tegel-textarea"
+              placeholder="Zone U / AU / A / N, SUP, erfdienstbaarheden..."
+            ></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div id="actieKnoppenContainer" class="actie-knoppen" style="display: none">
+        <button id="promptButton" class="actie-knop prompt">🚀 Genereer AI-prompt</button>
+      </div>
     </div>
+  </div>
 
-    <script src="script.js"></script>
+  <!-- Modal -->
+  <div id="promptModal" class="modal">
+    <div class="modal-content">
+      <span class="modal-close" id="modalClose">&times;</span>
+      <h2>Prompt & AI-resultaat</h2>
+      <textarea id="promptOutput" readonly></textarea>
+      <button id="kopieerPromptButton">Kopieer naar klembord</button>
+      <!-- hier komt de AI-knop -->
+    </div>
+  </div>
 
-    <script>
-      const btnAdres = document.getElementById('start-adres');
-      const btnAdvert = document.getElementById('start-advert');
-      const adresForm = document.getElementById('adres-form');
-      const advertForm = document.getElementById('advert-form');
+  <!-- EXTRA: zichtbaar AI-resultaat -->
+  <div id="aiResult" style="max-width: 960px; margin: 2rem auto; white-space: pre-wrap;"></div>
 
-      if (btnAdres && btnAdvert) {
-        btnAdres.addEventListener('click', () => {
-          adresForm.style.display = 'grid';
-          advertForm.style.display = 'none';
-        });
-        btnAdvert.addEventListener('click', () => {
-          adresForm.style.display = 'none';
-          advertForm.style.display = 'grid';
-        });
-      }
-    </script>
+  <script src="script.js"></script>
 </body>
 </html>
