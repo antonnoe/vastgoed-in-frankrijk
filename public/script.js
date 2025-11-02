@@ -23,6 +23,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const promptOutput = document.getElementById('promptOutput');
   const kopieerPromptButton = document.getElementById('kopieerPromptButton');
 
+  const aiResult = document.getElementById('aiResult');
+
   function capitalize(word) {
     if (!word) return '';
     return word.charAt(0).toUpperCase() + word.slice(1);
@@ -42,6 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // 1. Dossier bouwen
   genereerButton.addEventListener('click', () => {
     const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
     let plaats = plaatsInput.value.trim();
@@ -49,7 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const straat = straatInput.value.trim();
     const huisnummer = huisnummerInput.value.trim();
 
-    // ADVERTENTIE-MODUS
+    // advertentie-modus
     if (advertUrl) {
       if (!plaats) {
         const guessed = extractCityFromGreenAcres(advertUrl);
@@ -60,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (!plaats) {
-        alert('De advertentie geeft geen plaats vrij. Vul de plaatsnaam even handmatig in.');
+        alert('De advertentie verbergt de plaats. Vul de plaatsnaam even in.');
         return;
       }
 
@@ -70,34 +73,31 @@ document.addEventListener('DOMContentLoaded', () => {
       notesAdres.value =
         `Advertentie: ${advertUrl}\n` +
         `Gevonden plaats: ${plaats}${postcode ? ' (' + postcode + ')' : ''}\n` +
-        `Let op: exact adres wordt door de aanbieder niet vrijgegeven.\n` +
-        `Vraag bij makelaar/notaris:\n` +
-        `- exact adres\n` +
-        `- références cadastrales\n` +
-        `- ERP (État des Risques et Pollutions) < 6 maanden\n`;
+        `Let op: exact adres wordt niet vrijgegeven.\n` +
+        `Vraag bij makelaar/notaris:\n- exact adres\n- références cadastrales\n- ERP < 6 maanden\n`;
 
       notesRisques.value =
         `Controleer risico's voor: ${plaats}\n` +
-        `Primair: https://www.georisques.gouv.fr/\n` +
-        `Als traag/offline: ERP bij notaris opvragen.\n`;
+        `https://www.georisques.gouv.fr/\n` +
+        `Als traag/offline: ERP opvragen.\n`;
 
       notesDvf.value =
-        `Controleer DVF (gemeente-niveau) voor: ${plaats}\n` +
-        `Primair: https://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
-        `Als traag/offline: https://www.data.gouv.fr/ → zoek op "dvf"\n` +
-        `Zonder exact perceel is dit alleen indicatief.\n`;
+        `Controleer DVF (gemeente-niveau):\n` +
+        `https://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
+        `Als traag: https://www.data.gouv.fr → "dvf"\n` +
+        `Zonder perceel alleen indicatief.\n`;
 
       if (!notesPlu.value) {
         notesPlu.value =
-          `Controleer PLU / SUP voor: ${plaats}\n` +
+          `PLU / SUP voor: ${plaats}\n` +
           `https://www.geoportail-urbanisme.gouv.fr/map/\n` +
-          `Noteer zone (U, AU, A, N) en servitudes d'utilité publique.\n`;
+          `Noteer zone (U, AU, A, N) + servitudes.\n`;
       }
 
       return;
     }
 
-    // ADRES-MODUS
+    // adres-modus
     if (!plaats) {
       alert('Plaatsnaam is verplicht');
       return;
@@ -108,17 +108,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     notesAdres.value =
       `Invoer:\n${[huisnummer, straat, postcode, plaats].filter(Boolean).join(' ')}\n` +
-      `(genormaliseerde adresbasis, exact perceel later opvragen bij notaris)\n`;
+      `(exact perceel later opvragen bij notaris)\n`;
 
     notesRisques.value =
       `Controleer risico's voor: ${plaats}\n` +
-      `Primair: https://www.georisques.gouv.fr/\n` +
+      `https://www.georisques.gouv.fr/\n` +
       `Als traag/offline: ERP via verkoper/notaris (max 6 mnd).\n`;
 
     notesDvf.value =
       `Controleer DVF voor: ${plaats}\n` +
-      `Primair: https://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
-      `Als traag/offline: https://www.data.gouv.fr/ → "dvf"\n`;
+      `https://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
+      `Als traag/offline: https://www.data.gouv.fr → "dvf"\n`;
 
     if (!notesPlu.value) {
       notesPlu.value =
@@ -127,6 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // 2. Prompt tonen en AI-knop maken
   if (promptButton) {
     promptButton.addEventListener('click', () => {
       const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
@@ -134,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
         huisnummerInput.value,
         straatInput.value,
         postcodeInput.value,
-        plaatsInput.value,
+        plaatsInput.value
       ]
         .filter(Boolean)
         .join(' ');
@@ -184,37 +185,77 @@ ${dossier}
 
         sendBtn.addEventListener('click', async () => {
           sendBtn.textContent = 'Bezig...';
+          aiResult.textContent = 'AI wordt aangeroepen...';
           try {
             const resp = await fetch('/api/analyse', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ dossier: finalPrompt }),
+              body: JSON.stringify({ dossier: finalPrompt })
             });
             const data = await resp.json();
-
-            // laat ALTIJD iets zien
             if (!resp.ok) {
+              const errText =
+                typeof data === 'string' ? data : JSON.stringify(data, null, 2);
               promptOutput.value =
-                finalPrompt +
-                '\n\n--- AI FOUT ---\n' +
-                (typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+                finalPrompt + '\n\n--- AI FOUT ---\n' + errText;
+              aiResult.textContent = 'AI FOUT:\n' + errText;
             } else {
+              const out =
+                data.analysis && data.analysis.trim().length > 0
+                  ? data.analysis
+                  : '⚠️ lege analyse ontvangen (mogelijk safety)';
               promptOutput.value =
-                finalPrompt +
-                '\n\n--- AI-ANALYSE ---\n' +
-                (data.analysis || '⚠️ lege analyse ontvangen');
+                finalPrompt + '\n\n--- AI-ANALYSE ---\n' + out;
+              aiResult.textContent = out;
             }
           } catch (e) {
             promptOutput.value =
-              finalPrompt + '\n\n--- AI FOUT (JS) ---\n' + (e?.message || String(e));
+              finalPrompt + '\n\n--- AI FOUT (JS) ---\n' + e.message;
+            aiResult.textContent = 'AI FOUT (JS): ' + e.message;
           } finally {
             sendBtn.textContent = '👍 Verstuur naar AI';
           }
         });
+      } else {
+        // prompt is nieuw, maar knop bestond al
+        sendBtn.onclick = async () => {
+          sendBtn.textContent = 'Bezig...';
+          aiResult.textContent = 'AI wordt aangeroepen...';
+          try {
+            const resp = await fetch('/api/analyse', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ dossier: finalPrompt })
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+              const errText =
+                typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+              promptOutput.value =
+                finalPrompt + '\n\n--- AI FOUT ---\n' + errText;
+              aiResult.textContent = 'AI FOUT:\n' + errText;
+            } else {
+              const out =
+                data.analysis && data.analysis.trim().length > 0
+                  ? data.analysis
+                  : '⚠️ lege analyse ontvangen (mogelijk safety)';
+              promptOutput.value =
+                finalPrompt + '\n\n--- AI-ANALYSE ---\n' + out;
+              aiResult.textContent = out;
+            }
+          } catch (e) {
+            promptOutput.value =
+              finalPrompt + '\n\n--- AI FOUT (JS) ---\n' + e.message;
+            aiResult.textContent = 'AI FOUT (JS): ' + e.message;
+          } finally {
+            sendBtn.textContent = '👍 Verstuur naar AI';
+          }
+        };
       }
     });
   }
 
+  // modal sluiten
   if (modalClose) {
     modalClose.addEventListener('click', () => {
       promptModal.style.display = 'none';
@@ -231,7 +272,7 @@ ${dossier}
       promptOutput.select();
       document.execCommand('copy');
       kopieerPromptButton.textContent = 'Gekopieerd!';
-      setTimeout(() => (kopieerPromptButton.textContent = 'Kopieer naar Klembord'), 2000);
+      setTimeout(() => (kopieerPromptButton.textContent = 'Kopieer naar klembord'), 2000);
     });
   }
 });
