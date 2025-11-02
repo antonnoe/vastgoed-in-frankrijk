@@ -1,133 +1,200 @@
+// script.js
 document.addEventListener('DOMContentLoaded', () => {
-    
-    // Koppel alle elementen
-    const genereerButton = document.getElementById('genereerButton');
-    const plaatsInput = document.getElementById('plaatsInput');
-    const postcodeInput = document.getElementById('postcodeInput');
-    const straatInput = document.getElementById('straatInput');
-    const huisnummerInput = document.getElementById('huisnummerInput');
-    
-    const dashboardTegels = document.getElementById('dashboardTegels');
-    const actieKnoppenContainer = document.getElementById('actieKnoppenContainer');
-    
-    // Knoppen en Modal
-    const promptButton = document.getElementById('promptButton');
-    const modal = document.getElementById('promptModal');
-    const modalClose = document.getElementById('modalClose');
-    const promptOutput = document.getElementById('promptOutput');
-    const kopieerPromptButton = document.getElementById('kopieerPromptButton');
+  const genereerButton = document.getElementById('genereerButton');
 
-    // De tekstvakken
-    const notesAdres = document.getElementById('notes-adres');
-    const notesRisques = document.getElementById('notes-risques');
-    const notesDvf = document.getElementById('notes-dvf');
-    const notesPlu = document.getElementById('notes-plu');
+  // adres-velden
+  const plaatsInput = document.getElementById('plaatsInput');
+  const postcodeInput = document.getElementById('postcodeInput');
+  const straatInput = document.getElementById('straatInput');
+  const huisnummerInput = document.getElementById('huisnummerInput');
 
-    // --- STAP 1: Genereer het Automatische Dossier ---
-    const genereerDossier = async () => {
-        const plaats = plaatsInput.value.trim();
-        if (plaats === "") {
-            alert("Plaatsnaam is een verplicht veld.");
-            return;
+  // advertentie-veld
+  const advertLinkInput = document.getElementById('advertLinkInput');
+
+  // dashboard
+  const dashboardTegels = document.getElementById('dashboardTegels');
+  const actieKnoppenContainer = document.getElementById('actieKnoppenContainer');
+
+  // tegels
+  const notesAdres = document.getElementById('notes-adres');
+  const notesRisques = document.getElementById('notes-risques');
+  const notesDvf = document.getElementById('notes-dvf');
+  const notesPlu = document.getElementById('notes-plu');
+
+  // prompt
+  const promptButton = document.getElementById('promptButton');
+  const promptModal = document.getElementById('promptModal');
+  const modalClose = document.getElementById('modalClose');
+  const promptOutput = document.getElementById('promptOutput');
+  const kopieerPromptButton = document.getElementById('kopieerPromptButton');
+
+  // hulpfunctie: eerste letter hoofdletter
+  function capitalize(word) {
+    if (!word) return '';
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  }
+
+  // hulpfunctie: stad uit green-acres-URL halen
+  function extractCityFromGreenAcres(url) {
+    try {
+      const u = new URL(url);
+      // voorbeeld: /fr/properties/appartement/dijon/Axb1...
+      const parts = u.pathname.split('/').filter(Boolean);
+      // we zoeken het voorlaatste deel (vaak de stad)
+      // fr, properties, appartement, dijon, code
+      if (parts.length >= 4) {
+        const maybeCity = parts[3]; // 0:fr 1:properties 2:type 3:stad
+        return capitalize(maybeCity.replace(/-/g, ' '));
+      }
+      return '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  // hoofdactie
+  genereerButton.addEventListener('click', () => {
+    const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
+    let plaats = plaatsInput.value.trim();
+    const postcode = postcodeInput.value.trim();
+    const straat = straatInput.value.trim();
+    const huisnummer = huisnummerInput.value.trim();
+
+    // CASE 1: gebruiker werkt met advertentielink
+    if (advertUrl) {
+      // proberen stad te halen uit de URL
+      if (!plaats) {
+        const guessedCity = extractCityFromGreenAcres(advertUrl);
+        if (guessedCity) {
+          plaats = guessedCity;
+          plaatsInput.value = guessedCity; // vul het formulier alsnog
         }
+      }
 
-        // Toon "Laden..." bericht
-        dashboardTegels.style.display = 'grid';
-        actieKnoppenContainer.style.display = 'none';
-        notesAdres.value = "Bezig met ophalen...";
-        notesRisques.value = "Bezig met ophalen...";
-        notesDvf.value = "Bezig met ophalen...";
-        notesPlu.value = ""; // Maak handmatig veld leeg
-        genereerButton.disabled = true;
+      if (!plaats) {
+        alert('De advertentie geeft geen plaats vrij. Vul de plaatsnaam even handmatig in.');
+        return;
+      }
 
-        try {
-            const response = await fetch('/api/genereer-rapport', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    plaats: plaats, 
-                    postcode: postcodeInput.value.trim(), 
-                    straat: straatInput.value.trim(), 
-                    huisnummer: huisnummerInput.value.trim() 
-                }),
-            });
+      // dashboard tonen in "gemeente-modus"
+      dashboardTegels.style.display = 'grid';
+      actieKnoppenContainer.style.display = 'flex';
 
-            if (!response.ok) {
-                let errorMsg = `Serverfout: ${response.status}`;
-                try {
-                    const errorData = await response.json();
-                    errorMsg = errorData.error || errorMsg;
-                } catch (e) {
-                    errorMsg = await response.text();
-                }
-                throw new Error(errorMsg);
-            }
+      notesAdres.value =
+        `Advertentie: ${advertUrl}\n` +
+        `Gevonden plaats: ${plaats}${postcode ? ' (' + postcode + ')' : ''}\n` +
+        `Let op: exact adres wordt door de aanbieder niet vrijgegeven. Vraag bij makelaar/notaris:\n` +
+        `- exact adres\n- références cadastrales\n- ERP < 6 maanden\n`;
 
-            // SUCCES: Vul de automatische velden
-            const data = await response.json();
-            notesAdres.value = data.adres || "Adres niet gevonden.";
-            notesRisques.value = data.georisques || "Risico data niet gevonden.";
-            notesDvf.value = data.dvf || "DVF data niet gevonden.";
-            
-            // Toon de rest van het dashboard
-            actieKnoppenContainer.style.display = 'flex';
+      notesRisques.value =
+        `Open en controleer op: https://www.georisques.gouv.fr/ (zoek op: ${plaats})\n` +
+        `Als site traag is: vraag ERP aan verkoper/notaris.`;
 
-        } catch (error) {
-            // Toon fout in het eerste vak
-            notesAdres.value = `Er is een fout opgetreden: ${error.message}`;
-            notesRisques.value = "";
-            notesDvf.value = "";
-        } finally {
-            genereerButton.disabled = false;
-        }
-    };
+      notesDvf.value =
+        `Open DVF voor de gemeente (indicatief): https://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
+        `Zonder exact perceel is dit alleen een prijsniveau-check.`;
 
-    // --- STAP 2: Genereer de AI-Prompt ---
-    const genereerPrompt = () => {
-        const prompt = `
+      if (!notesPlu.value) {
+        notesPlu.value =
+          `PLU online controleren voor: ${plaats}\n` +
+          `https://www.geoportail-urbanisme.gouv.fr/map/\n` +
+          `Zoek op gemeente, zoom in, noteer zone (Ub, Uc, A, N...).`;
+      }
+
+      return;
+    }
+
+    // CASE 2: normale adres-invoer
+    if (!plaats) {
+      alert('Plaatsnaam is verplicht');
+      return;
+    }
+
+    // hier komt later je echte fetch / Vercel call
+    dashboardTegels.style.display = 'grid';
+    actieKnoppenContainer.style.display = 'flex';
+
+    notesAdres.value =
+      `Invoer:\n${[huisnummer, straat, postcode, plaats].filter(Boolean).join(' ')}\n(dit is de genormaliseerde adresbasis)`;
+
+    notesRisques.value =
+      `Controleer risico's voor: ${plaats}\nhttps://www.georisques.gouv.fr/\nAls er niets gevonden wordt: bij notaris ERP opvragen.`;
+
+    notesDvf.value =
+      `Controleer verkopen voor: ${plaats}\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\nZonder kadaster-id alleen gemeentelijk niveau.`;
+
+    if (!notesPlu.value) {
+      notesPlu.value =
+        `Controleer PLU voor: ${plaats}\nhttps://www.geoportail-urbanisme.gouv.fr/map/\nNoteer zone + beperkingen.`;
+    }
+  });
+
+  // prompt genereren
+  if (promptButton) {
+    promptButton.addEventListener('click', () => {
+      const adresRegel = [
+        huisnummerInput.value,
+        straatInput.value,
+        postcodeInput.value,
+        plaatsInput.value,
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+      const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
+
+      const prompt = `
 Hallo, ik analyseer een woning in Frankrijk en heb een dossier samengesteld.
 Kun je me helpen deze bevindingen te interpreteren?
 
---- AUTOMATISCH DOSSIER ---
+--- HANDMATIG DOSSIER ---
 
-[OFFICIEEL ADRES]
-${notesAdres.value}
+[ADRES / ADVERTENTIE]
+${advertUrl ? advertUrl + '\n' : ''}${adresRegel || 'Geen volledig adres bekend'}
 
 [RISICO'S (GÉORISQUES)]
-${notesRisques.value}
+${notesRisques.value || 'Geen notities ingevoerd.'}
 
 [VERKOOPPRIJZEN (DVF)]
-${notesDvf.value}
+${notesDvf.value || 'Geen notities ingevoerd.'}
 
---- HANDMATIGE NOTITIES ---
+[KADASTER]
+${notesAdres.value || 'Geen kadastrale info.'}
 
 [BESTEMMINGSPLAN (PLU)]
-${notesPlu.value || "Geen notities ingevoerd."}
+${notesPlu.value || 'Nog niet gecontroleerd.'}
 
 --- VRAGEN ---
 1. Wat zijn de grootste "red flags" in dit dossier?
 2. Wat betekent dit voor de verzekering (denk aan 'Cat Nat')?
 3. Zijn er verborgen kansen (bijv. in het bestemmingsplan)?
 4. Welke vragen moet ik nu stellen aan de notaris?
-        `;
+      `.trim();
 
-        // Toon de modal
-        promptOutput.value = prompt.trim();
-        modal.style.display = 'block';
-    };
-
-    // --- Event Listeners ---
-    genereerButton.addEventListener('click', genereerDossier);
-    promptButton.addEventListener('click', genereerPrompt);
-
-    // Modal sluiten
-    modalClose.onclick = () => { modal.style.display = "none"; }
-    window.onclick = (event) => {
-        if (event.target == modal) { modal.style.display = "none"; }
-    }
-    
-    kopieerPromptButton.addEventListener('click', () => {
-        promptOutput.select();
-        document.execCommand('copy');
+      promptOutput.value = prompt;
+      promptModal.style.display = 'block';
     });
+  }
+
+  // modal acties
+  if (modalClose) {
+    modalClose.addEventListener('click', () => {
+      promptModal.style.display = 'none';
+    });
+  }
+
+  window.addEventListener('click', (e) => {
+    if (e.target === promptModal) {
+      promptModal.style.display = 'none';
+    }
+  });
+
+  if (kopieerPromptButton) {
+    kopieerPromptButton.addEventListener('click', () => {
+      promptOutput.select();
+      document.execCommand('copy');
+      kopieerPromptButton.textContent = 'Gekopieerd!';
+      setTimeout(() => (kopieerPromptButton.textContent = 'Kopieer naar Klembord'), 2000);
+    });
+  }
 });
