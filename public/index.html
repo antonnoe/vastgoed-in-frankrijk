@@ -1,3 +1,4 @@
+<!-- public/index.html -->
 <!DOCTYPE html>
 <html lang="nl">
 <head>
@@ -22,7 +23,6 @@
       </div>
     </div>
 
-    <!-- OUDE HEADER -->
     <header>
         <h1>Het Franse Vastgoed Kompas</h1>
         <p>Uw Hybride Due Diligence Tool</p>
@@ -35,7 +35,7 @@
 
         <div id="DossierDashboard" class="tab-content active">
             <h2>Stap 1: Genereer het Automatische Dossier</h2>
-            <p>Vul de 4 velden in (plaats is verplicht). De tool haalt automatisch de juiste portals naar voren.</p>
+            <p>Vul de 4 velden in (plaats is verplicht) óf plak een advertentielink. De tool zet de juiste Franse portals klaar.</p>
             
             <!-- ADRES-FORM -->
             <div class="form-grid" id="adres-form">
@@ -108,7 +108,7 @@
             </div>
 
             <div id="actieKnoppenContainer" class="actie-knoppen" style="display: none;">
-                <button id="promptButton" class="actie-knop prompt">🚀 Genereer AI-Prompt (Stap 2)</button>
+                <button id="promptButton" class="actie-knop prompt">🚀 Genereer AI-Prompt</button>
             </div>
 
             <!-- OFFICIËLE BRONNEN BLOK -->
@@ -132,15 +132,15 @@
         <div class="modal-content">
             <span class="modal-close" id="modalClose">&times;</span>
             <h2>Uw AI-Prompt is Klaar</h2>
-            <p>Kopieer of verstuur naar de ingebouwde AI.</p>
+            <p>Dit is wat er naar de AI gaat. (read-only)</p>
             <textarea id="promptOutput" readonly></textarea>
             <button id="kopieerPromptButton">Kopieer naar Klembord</button>
+            <!-- hier komt straks “Verstuur naar AI” -->
         </div>
     </div>
 
     <script src="script.js"></script>
 
-    <!-- SWITCH SCRIPT VOOR DE 2 KNOPPEN -->
     <script>
       const btnAdres = document.getElementById('start-adres');
       const btnAdvert = document.getElementById('start-advert');
