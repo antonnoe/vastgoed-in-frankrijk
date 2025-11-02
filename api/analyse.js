@@ -6,9 +6,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Alleen POST toegestaan' });
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY; // <- jouw naam in Vercel
   if (!apiKey) {
-    return res.status(500).json({ error: 'OPENAI_API_KEY ontbreekt op de server' });
+    return res.status(500).json({ error: 'GEMINI_API_KEY ontbreekt op de server' });
   }
 
   const { dossier } = req.body || {};
@@ -17,33 +17,36 @@ export default async function handler(req, res) {
   }
 
   const prompt = `
-Je mag ALLEEN werken met de info hieronder. NIET zelf extra Franse bronnen, telefoonnummers, gemeenten, prijzen, PPR’s of openingstijden verzinnen.
+Je bent een Franse vastgoed-assistent voor NL/BE kopers en eigenaars.
 
 Geef je antwoord ALLEEN in deze 3 blokken:
 
 1. Rode vlaggen (max. 5 bullets)
-2. Wat nu regelen (verzekering / ERP / PLU / servitudes)
+2. Wat nu regelen (ERP < 6 mnd / PLU / servitudes / assainissement)
 3. Vragen aan verkoper, notaris en makelaar (3×3 bullets)
 
-Als het exacte adres ontbreekt: zeg dat en verwijs naar ERP < 6 maanden + références cadastrales.
+Als het adres of het kadastraal nummer ontbreekt: zeg dat kort en zet het onder "Wat nu regelen".
+Geen telefoonnummers, geen openingstijden verzinnen.
 
 --- DOSSIER ---
 ${dossier}
   `.trim();
 
   try {
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-5',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-      }),
-    });
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [{ text: prompt }]
+            }
+          ]
+        })
+      }
+    );
 
     if (!r.ok) {
       const text = await r.text();
@@ -51,7 +54,9 @@ ${dossier}
     }
 
     const data = await r.json();
-    const answer = data?.choices?.[0]?.message?.content || 'Geen antwoord.';
+    const answer =
+      data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('\n') ||
+      'Geen antwoord van Gemini.';
     return res.status(200).json({ analysis: answer });
   } catch (e) {
     return res.status(500).json({ error: e.message });
