@@ -8,6 +8,21 @@
 </head>
 <body>
 
+    <!-- BOVENSTE BANNER (NIEUW) -->
+    <div style="background:#800000;color:#fff;padding:1.5rem 1rem;">
+      <div style="max-width:1100px;margin:0 auto;display:flex;gap:1rem;flex-wrap:wrap;align-items:center;">
+        <div style="flex:1 1 280px;">
+          <h1 style="margin:0 0 .35rem 0;font-size:1.5rem;">Vastgoed in Frankrijk</h1>
+          <p style="margin:0;opacity:.9;">Start met een adres óf met een advertentielink.</p>
+        </div>
+        <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
+          <button id="start-adres" style="background:#fff;color:#800000;border:none;padding:.5rem 1rem;border-radius:.4rem;cursor:pointer;font-weight:600;">🏠 Adres invoeren</button>
+          <button id="start-advert" style="background:rgba(255,255,255,.12);color:#fff;border:1px solid #fff;padding:.5rem 1rem;border-radius:.4rem;cursor:pointer;font-weight:500;">🔗 Advertentielink plakken</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- BESTAANDE HEADER -->
     <header>
         <h1>Het Franse Vastgoed Kompas</h1>
         <p>Uw Hybride Due Diligence Tool</p>
@@ -22,7 +37,7 @@
             <h2>Stap 1: Genereer het Automatische Dossier</h2>
             <p>Vul de 4 velden in (plaats is verplicht). De tool haalt automatisch data op van Géorisques en DVF.</p>
             
-            <div class="form-grid">
+            <div class="form-grid" id="adres-form">
                 <div class="input-veld">
                     <label for="plaatsInput">Plaatsnaam (verplicht)</label>
                     <input type="text" id="plaatsInput" placeholder="Bijv: Montcavrel">
@@ -38,6 +53,17 @@
                 <div class="input-veld">
                     <label for="huisnummerInput">Huisnummer</label>
                     <input type="text" id="huisnummerInput" placeholder="Bijv: 22">
+                </div>
+            </div>
+
+            <!-- NIEUWE INPUT: ADVERTENTIELINK -->
+            <div class="form-grid" id="advert-form" style="display:none;">
+                <div class="input-veld" style="grid-column:1/-1;">
+                    <label for="advertLinkInput">Advertentielink (Green-Acres, Leboncoin, SeLoger...)</label>
+                    <input type="url" id="advertLinkInput" placeholder="Plak hier de URL van de advertentie">
+                    <p style="margin:.5rem 0 0 0;font-size:.8rem;color:#666;">
+                        Tip: bij Franse advertenties ontbreekt vaak het exacte adres. We vragen dit later op bij makelaar/notaris.
+                    </p>
                 </div>
             </div>
             
@@ -98,5 +124,24 @@
     </div>
 
     <script src="script.js"></script>
+
+    <!-- KLEINE INLINE SCRIPTJE VOOR DE TWEE KNOPPEN -->
+    <script>
+      const btnAdres = document.getElementById('start-adres');
+      const btnAdvert = document.getElementById('start-advert');
+      const adresForm = document.getElementById('adres-form');
+      const advertForm = document.getElementById('advert-form');
+
+      if (btnAdres && btnAdvert && adresForm && advertForm) {
+        btnAdres.addEventListener('click', () => {
+          adresForm.style.display = 'grid';
+          advertForm.style.display = 'none';
+        });
+        btnAdvert.addEventListener('click', () => {
+          adresForm.style.display = 'none';
+          advertForm.style.display = 'grid';
+        });
+      }
+    </script>
 </body>
 </html>
