@@ -64,7 +64,7 @@ export default async function handler(req, res) {
 
     if (!text) {
       text =
-        '⚠️ AI gaf geen tekst terug. Ruwe respons:\n' +
+        '?? AI gaf geen tekst terug. Ruwe respons:\n' +
         JSON.stringify(raw, null, 2);
     }
 
