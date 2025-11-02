@@ -3,115 +3,121 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Het Franse Vastgoed Kompas</title>
+  <title>IMMODIAGNOSTIQUE — Franse vastgoedcheck</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <h1>Het Franse Vastgoed Kompas</h1>
-    <p>Uw Hybride Due Diligence Tool</p>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo-icon"></div>
+      <div class="brand-text">
+        <div class="logo-text">IMMODIAGNOSTIQUE</div>
+        <div class="subtext">Een concept van Infofrankrijk.com</div>
+      </div>
+    </div>
+    <p class="tagline">Hybride due diligence voor kopers & eigenaars in Frankrijk</p>
   </header>
 
-  <div class="tab-container">
-    <div class="tab-buttons">
-      <button class="tab-button active">Hybride Dossier Generator</button>
+  <main class="outer">
+    <div class="app-card">
+      <div class="tab-container">
+        <div class="tab-buttons">
+          <button class="tab-button active">Hybride Dossier</button>
+        </div>
+
+        <div id="DossierDashboard" class="tab-content active">
+          <h2>1. Vul een adres <u>of</u> een advertentielink in</h2>
+          <p class="small">Advertentie van Green-Acres of LeBonCoin werkt ook. Bij Franse advertenties is het exacte adres vaak verborgen — dat vangen we af in de AI.</p>
+
+          <div class="form-grid">
+            <div class="input-veld">
+              <label for="advertLinkInput">Advertentielink (optioneel)</label>
+              <input type="url" id="advertLinkInput" placeholder="https://www.green-acres.fr/...">
+            </div>
+            <div class="input-veld">
+              <label for="plaatsInput">Plaatsnaam (verplicht als geen link)</label>
+              <input type="text" id="plaatsInput" placeholder="Bijv: Biarritz">
+            </div>
+            <div class="input-veld">
+              <label for="postcodeInput">Postcode</label>
+              <input type="text" id="postcodeInput" placeholder="64200">
+            </div>
+            <div class="input-veld">
+              <label for="straatInput">Straat</label>
+              <input type="text" id="straatInput" placeholder="Rue Pasteur">
+            </div>
+            <div class="input-veld">
+              <label for="huisnummerInput">Huisnr.</label>
+              <input type="text" id="huisnummerInput" placeholder="Bijv: 12">
+            </div>
+          </div>
+
+          <div class="button-container">
+            <button id="genereerButton" class="primary-btn">Genereer dossier</button>
+          </div>
+
+          <div id="dashboardTegels" class="tegels-container" style="display: none;">
+
+            <div class="tegel">
+              <div class="tegel-header"><h3>1. Adres / advertentie</h3></div>
+              <div class="tegel-body">
+                <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
+              </div>
+            </div>
+
+            <div class="tegel">
+              <div class="tegel-header"><h3>2. Géorisques</h3></div>
+              <div class="tegel-body">
+                <textarea id="notes-risques" class="tegel-textarea" readonly></textarea>
+              </div>
+            </div>
+
+            <div class="tegel">
+              <div class="tegel-header"><h3>3. DVF / prijzen</h3></div>
+              <div class="tegel-body">
+                <textarea id="notes-dvf" class="tegel-textarea" readonly></textarea>
+              </div>
+            </div>
+
+            <div class="tegel">
+              <div class="tegel-header"><h3>4. PLU / SUP</h3></div>
+              <div class="tegel-body">
+                <textarea id="notes-plu" class="tegel-textarea"></textarea>
+              </div>
+            </div>
+
+          </div>
+
+          <div id="actieKnoppenContainer" class="actie-knoppen" style="display: none;">
+            <button id="promptButton" class="primary-btn">👍 Verstuur naar AI</button>
+          </div>
+        </div>
+      </div>
+
+      <p class="disclaimer">
+        ⚠️ IMMODIAGNOSTIQUE geeft géén juridisch advies. Officiële documenten (ERP &lt; 6 mnd, PLU-uittreksel, servitudes d’utilité publique,
+        état hypothécaire) moeten ALTIJD via notaris/gemeente worden opgevraagd. AI-analyse is indicatief.
+      </p>
     </div>
-
-    <div id="DossierDashboard" class="tab-content active">
-      <h2>Stap 1: Genereer het dossier</h2>
-      <p>Vul óf een adres in, óf plak een advertentielink.</p>
-
-      <div class="form-grid">
-        <div class="input-veld">
-          <label for="advertLinkInput">Advertentielink (optioneel)</label>
-          <input
-            type="text"
-            id="advertLinkInput"
-            placeholder="https://www.green-acres.fr/..."
-          />
-        </div>
-        <div class="input-veld">
-          <label for="plaatsInput">Plaatsnaam (verplicht)</label>
-          <input type="text" id="plaatsInput" placeholder="Bijv: Biarritz" />
-        </div>
-        <div class="input-veld">
-          <label for="postcodeInput">Postcode</label>
-          <input type="text" id="postcodeInput" placeholder="Bijv: 64200" />
-        </div>
-        <div class="input-veld">
-          <label for="straatInput">Straatnaam</label>
-          <input type="text" id="straatInput" placeholder="Bijv: Rue Pasteur" />
-        </div>
-        <div class="input-veld">
-          <label for="huisnummerInput">Huisnummer</label>
-          <input type="text" id="huisnummerInput" placeholder="Bijv: 999" />
-        </div>
-      </div>
-
-      <div class="button-container">
-        <button id="genereerButton">Genereer dossier</button>
-      </div>
-
-      <div id="dashboardTegels" class="tegels-container" style="display: none">
-        <div class="tegel">
-          <div class="tegel-header"><h3>1. Officieel adres / advertentie</h3></div>
-          <div class="tegel-body">
-            <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
-          </div>
-        </div>
-
-        <div class="tegel">
-          <div class="tegel-header"><h3>2. Risico's (Géorisques)</h3></div>
-          <div class="tegel-body">
-            <textarea id="notes-risques" class="tegel-textarea" readonly></textarea>
-          </div>
-        </div>
-
-        <div class="tegel">
-          <div class="tegel-header"><h3>3. Verkoopprijzen (DVF)</h3></div>
-          <div class="tegel-body">
-            <textarea id="notes-dvf" class="tegel-textarea" readonly></textarea>
-          </div>
-        </div>
-
-        <div class="tegel handmatig">
-          <div class="tegel-header"><h3>4. Bestemmingsplan (PLU)</h3></div>
-          <div class="tegel-body">
-            <p>Controleer zelf in Géoportail en plak hier de regels.</p>
-            <a
-              href="https://www.geoportail-urbanisme.gouv.fr/map/"
-              class="tegel-knop"
-              target="_blank"
-              >Open PLU-kaart</a
-            >
-            <textarea
-              id="notes-plu"
-              class="tegel-textarea"
-              placeholder="Zone U / AU / A / N, SUP, erfdienstbaarheden..."
-            ></textarea>
-          </div>
-        </div>
-      </div>
-
-      <div id="actieKnoppenContainer" class="actie-knoppen" style="display: none">
-        <button id="promptButton" class="actie-knop prompt">🚀 Genereer AI-prompt</button>
-      </div>
-    </div>
-  </div>
+  </main>
 
   <!-- Modal -->
   <div id="promptModal" class="modal">
     <div class="modal-content">
       <span class="modal-close" id="modalClose">&times;</span>
-      <h2>Prompt & AI-resultaat</h2>
+      <h2>AI-analyse</h2>
+      <p class="small">Dit is de prompt die naar de AI is gestuurd. Deze is niet te wijzigen.</p>
       <textarea id="promptOutput" readonly></textarea>
-      <button id="kopieerPromptButton">Kopieer naar klembord</button>
-      <!-- hier komt de AI-knop -->
+
+      <div class="ai-actions">
+        <div id="aiResult" class="ai-result">Nog geen AI-resultaat.</div>
+        <button id="kopieerPromptButton">Kopieer prompt</button>
+        <button id="makePdfButton" disabled>📄 Maak PDF (later)</button>
+        <button id="notarisBriefButton" disabled>✉️ Franse notarisbrief (later)</button>
+      </div>
     </div>
   </div>
-
-  <!-- EXTRA: zichtbaar AI-resultaat -->
-  <div id="aiResult" style="max-width: 960px; margin: 2rem auto; white-space: pre-wrap;"></div>
 
   <script src="script.js"></script>
 </body>
