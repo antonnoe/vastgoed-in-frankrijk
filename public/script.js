@@ -24,6 +24,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const aiResult = document.getElementById('aiResult');
 
+  // NIEUW: knoppen in modal
+  const makePdfBtn = document.getElementById('makePdfBtn');
+  const notarisBriefBtn = document.getElementById('notarisBriefBtn');
+
   function capitalize(word) {
     if (!word) return '';
     return word.charAt(0).toUpperCase() + word.slice(1);
@@ -221,6 +225,42 @@ ${dossier}
       document.execCommand('copy');
       kopieerPromptButton.textContent = 'Gekopieerd!';
       setTimeout(() => (kopieerPromptButton.textContent = 'Kopieer naar klembord'), 1500);
+    });
+  }
+
+  // NIEUW: placeholders voor PDF en notarisbrief
+  if (makePdfBtn) {
+    makePdfBtn.addEventListener('click', () => {
+      const content = promptOutput.value || '(geen prompt gevonden)';
+      alert(
+        'PDF-export komt hier.\n\nVoor nu kun je deze tekst plakken in Word/Docs en als PDF bewaren.\n\nLengte: ' +
+          content.length +
+          ' tekens.'
+      );
+    });
+  }
+
+  if (notarisBriefBtn) {
+    notarisBriefBtn.addEventListener('click', () => {
+      const dossierTekst = promptOutput.value || '';
+      const briefFr = `Objet : Demande de communication du dossier de diagnostic et de l’ERP (moins de 6 mois)
+
+Maître,
+
+Je vous prie de bien vouloir me communiquer, pour le bien concerné, l’ensemble des pièces suivantes :
+- ERP (État des Risques et Pollutions) de moins de 6 mois,
+- références cadastrales complètes,
+- extrait de PLU ou indication de la zone d’urbanisme applicable,
+- indication d’éventuelles servitudes d’utilité publique.
+
+Cette demande fait suite à une analyse préalable (outil “Immodiagnostique”) basée sur les seules données publiques (Géorisques, DVF, Géoportail Urbanisme). Elle doit donc être confirmée par vos soins.
+
+Je vous remercie par avance.
+
+Cordialement,`;
+
+      // toon in AI-resultaat, maar niet wijzigbaar in textarea
+      aiResult.textContent = briefFr + '\n\n---\n(gegenereerd door Immodiagnostique)';
     });
   }
 });
