@@ -8,7 +8,7 @@
 </head>
 <body>
 
-    <!-- BOVENSTE BANNER (NIEUW) -->
+    <!-- BOVENSTE BANNER -->
     <div style="background:#800000;color:#fff;padding:1.5rem 1rem;">
       <div style="max-width:1100px;margin:0 auto;display:flex;gap:1rem;flex-wrap:wrap;align-items:center;">
         <div style="flex:1 1 280px;">
@@ -22,7 +22,7 @@
       </div>
     </div>
 
-    <!-- BESTAANDE HEADER -->
+    <!-- OUDE HEADER -->
     <header>
         <h1>Het Franse Vastgoed Kompas</h1>
         <p>Uw Hybride Due Diligence Tool</p>
@@ -35,8 +35,9 @@
 
         <div id="DossierDashboard" class="tab-content active">
             <h2>Stap 1: Genereer het Automatische Dossier</h2>
-            <p>Vul de 4 velden in (plaats is verplicht). De tool haalt automatisch data op van Géorisques en DVF.</p>
+            <p>Vul de 4 velden in (plaats is verplicht). De tool haalt automatisch de juiste portals naar voren.</p>
             
+            <!-- ADRES-FORM -->
             <div class="form-grid" id="adres-form">
                 <div class="input-veld">
                     <label for="plaatsInput">Plaatsnaam (verplicht)</label>
@@ -56,13 +57,13 @@
                 </div>
             </div>
 
-            <!-- NIEUWE INPUT: ADVERTENTIELINK -->
+            <!-- ADVERTENTIE-FORM -->
             <div class="form-grid" id="advert-form" style="display:none;">
                 <div class="input-veld" style="grid-column:1/-1;">
                     <label for="advertLinkInput">Advertentielink (Green-Acres, Leboncoin, SeLoger...)</label>
                     <input type="url" id="advertLinkInput" placeholder="Plak hier de URL van de advertentie">
                     <p style="margin:.5rem 0 0 0;font-size:.8rem;color:#666;">
-                        Tip: bij Franse advertenties ontbreekt vaak het exacte adres. We vragen dit later op bij makelaar/notaris.
+                        Bij Franse advertenties ontbreekt vaak het exacte adres. We schakelen dan naar gemeentelijk niveau.
                     </p>
                 </div>
             </div>
@@ -74,30 +75,30 @@
             <div id="dashboardTegels" class="tegels-container" style="display: none;">
                 
                 <div class="tegel">
-                    <div class="tegel-header"><h3>1. Officieel Adres (Automatisch)</h3></div>
+                    <div class="tegel-header"><h3>1. Officieel Adres / Invoer</h3></div>
                     <div class="tegel-body">
                         <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
                     </div>
                 </div>
 
                 <div class="tegel">
-                    <div class="tegel-header"><h3>2. Risico's (Automatisch)</h3></div>
+                    <div class="tegel-header"><h3>2. Risico's (Géorisques)</h3></div>
                     <div class="tegel-body">
                         <textarea id="notes-risques" class="tegel-textarea" readonly></textarea>
                     </div>
                 </div>
 
                 <div class="tegel">
-                    <div class="tegel-header"><h3>3. Verkoopprijzen (Automatisch)</h3></div>
+                    <div class="tegel-header"><h3>3. Verkoopprijzen (DVF)</h3></div>
                     <div class="tegel-body">
                         <textarea id="notes-dvf" class="tegel-textarea" readonly></textarea>
                     </div>
                 </div>
 
                 <div class="tegel handmatig">
-                    <div class="tegel-header"><h3>4. Bestemmingsplan (Handmatig)</h3></div>
+                    <div class="tegel-header"><h3>4. Bestemmingsplan (PLU)</h3></div>
                     <div class="tegel-body">
-                        <p>Deze data kan niet automatisch. Klik op de knop, zoek uw perceel, en plak de regels (bv. 'Zone Ub') hier.</p>
+                        <p>PLU/SUP is vaak niet automatisch. Open het portal en plak de regels hier.</p>
                         <a href="https://www.geoportail-urbanisme.gouv.fr/map/" class="tegel-knop" target="_blank">Open Bestemmingsplan Kaart</a>
                         <label for="notes-plu">Plak hier uw bevindingen:</label>
                         <textarea id="notes-plu" class="tegel-textarea" placeholder="Typ of plak hier de PLU-regels..."></textarea>
@@ -110,14 +111,28 @@
                 <button id="promptButton" class="actie-knop prompt">🚀 Genereer AI-Prompt (Stap 2)</button>
             </div>
 
+            <!-- OFFICIËLE BRONNEN BLOK -->
+            <section style="margin-top:1.5rem;background:#fff;border:1px solid #ddd;border-radius:.5rem;padding:1rem;">
+              <h3 style="margin-top:0;color:#800000;">Officiële Franse bronnen</h3>
+              <p style="margin:0 0 .75rem 0;font-size:.9rem;">Open deze sites handmatig als een bron traag of offline is, of als het adres niet volledig is.</p>
+              <ul style="margin:0;padding-left:1.1rem;line-height:1.5;">
+                <li><a href="https://app.dvf.etalab.gouv.fr/" target="_blank">DVF Etalab (transacties)</a></li>
+                <li><a href="https://www.data.gouv.fr/" target="_blank">data.gouv.fr – DVF dataset</a></li>
+                <li><a href="https://www.geoportail-urbanisme.gouv.fr/map/" target="_blank">Géoportail Urbanisme (PLU / SUP)</a></li>
+                <li><a href="https://www.georisques.gouv.fr/" target="_blank">Géorisques (risico’s / ERP)</a></li>
+                <li><span style="opacity:.6;">MeilleursAgents (alleen raadplegen, geen API)</span></li>
+              </ul>
+            </section>
+
         </div>
     </div>
 
+    <!-- PROMPT MODAL -->
     <div id="promptModal" class="modal">
         <div class="modal-content">
             <span class="modal-close" id="modalClose">&times;</span>
             <h2>Uw AI-Prompt is Klaar</h2>
-            <p>Kopieer de onderstaande tekst en plak deze in uw chat met Gemini (of een andere AI) voor een volledige analyse.</p>
+            <p>Kopieer of verstuur naar de ingebouwde AI.</p>
             <textarea id="promptOutput" readonly></textarea>
             <button id="kopieerPromptButton">Kopieer naar Klembord</button>
         </div>
@@ -125,14 +140,14 @@
 
     <script src="script.js"></script>
 
-    <!-- KLEINE INLINE SCRIPTJE VOOR DE TWEE KNOPPEN -->
+    <!-- SWITCH SCRIPT VOOR DE 2 KNOPPEN -->
     <script>
       const btnAdres = document.getElementById('start-adres');
       const btnAdvert = document.getElementById('start-advert');
       const adresForm = document.getElementById('adres-form');
       const advertForm = document.getElementById('advert-form');
 
-      if (btnAdres && btnAdvert && adresForm && advertForm) {
+      if (btnAdres && btnAdvert) {
         btnAdres.addEventListener('click', () => {
           adresForm.style.display = 'grid';
           advertForm.style.display = 'none';
