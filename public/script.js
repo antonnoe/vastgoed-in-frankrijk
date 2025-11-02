@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const straatInput = document.getElementById('straatInput');
   const huisnummerInput = document.getElementById('huisnummerInput');
   const advertLinkInput = document.getElementById('advertLinkInput');
+  const advertTextInput = document.getElementById('advertTextInput');
 
   const dashboardTegels = document.getElementById('dashboardTegels');
   const actieKnoppenContainer = document.getElementById('actieKnoppenContainer');
@@ -23,10 +24,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const kopieerPromptButton = document.getElementById('kopieerPromptButton');
 
   const aiResult = document.getElementById('aiResult');
+  const needBtn = document.getElementById('showNeed');
+  const niceBtn = document.getElementById('showNice');
 
-  // NIEUW: knoppen in modal
-  const makePdfBtn = document.getElementById('makePdfBtn');
-  const notarisBriefBtn = document.getElementById('notarisBriefBtn');
+  let lastAIText = '';
+  let lastSources = [];
 
   function capitalize(word) {
     if (!word) return '';
@@ -47,7 +49,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // dossier maken
   genereerButton.addEventListener('click', () => {
     const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
     let plaats = plaatsInput.value.trim();
@@ -72,15 +73,17 @@ document.addEventListener('DOMContentLoaded', () => {
       actieKnoppenContainer.style.display = 'flex';
 
       notesAdres.value =
-        `Advertentie: ${advertUrl}\nGevonden plaats: ${plaats}${postcode ? ' (' + postcode + ')' : ''}\n` +
-        `Vraag bij makelaar/notaris: exact adres, références cadastrales, ERP < 6 mnd.\n`;
+        `Advertentie: ${advertUrl}\nGevonden plaats: ${plaats}${
+          postcode ? ' (' + postcode + ')' : ''
+        }\n` + `Vraag bij makelaar/notaris: exact adres, références cadastrales, ERP < 6 mnd.\n`;
 
       notesRisques.value =
         `Controleer risico's voor: ${plaats}\nhttps://www.georisques.gouv.fr/\nAls traag: ERP via notaris.\n`;
 
       notesDvf.value =
-        `Controleer DVF (gemeente):\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
-        `Als traag: https://www.data.gouv.fr → "dvf"\n`;
+        `Controleer DVF (gemeente):\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(
+          plaats
+        )}\n` + `Als traag: https://www.data.gouv.fr → "dvf"\n`;
 
       if (!notesPlu.value) {
         notesPlu.value =
@@ -91,7 +94,6 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // adresmodus
     if (!plaats) {
       alert('Plaatsnaam is verplicht');
       return;
@@ -108,8 +110,9 @@ document.addEventListener('DOMContentLoaded', () => {
       `Controleer risico's voor: ${plaats}\nhttps://www.georisques.gouv.fr/\nAls traag/offline: ERP bij notaris.\n`;
 
     notesDvf.value =
-      `Controleer DVF voor: ${plaats}\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
-      `Als traag/offline: https://www.data.gouv.fr → "dvf"\n`;
+      `Controleer DVF voor: ${plaats}\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(
+        plaats
+      )}\n` + `Als traag/offline: https://www.data.gouv.fr → "dvf"\n`;
 
     if (!notesPlu.value) {
       notesPlu.value =
@@ -117,10 +120,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // prompt + send-to-ai
   if (promptButton) {
     promptButton.addEventListener('click', () => {
       const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
+      const advertText = advertTextInput ? advertTextInput.value.trim() : '';
       const adresRegel = [
         huisnummerInput.value,
         straatInput.value,
@@ -132,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const dossier = `
 [ADRES / ADVERTENTIE]
-${advertUrl ? advertUrl : (adresRegel || 'Geen volledig adres')}
+${advertUrl ? advertUrl : adresRegel || 'Geen volledig adres'}
 
 [RISICO'S (GÉORISQUES)]
 ${notesRisques.value || 'Geen notities'}
@@ -145,24 +148,13 @@ ${notesAdres.value || 'Geen kadastrale info.'}
 
 [PLU]
 ${notesPlu.value || 'Nog niet gecontroleerd.'}
+
+[ADVERTENTIE-TEKST (optioneel)]
+${advertText || 'Geen advertentietekst geplakt.'}
       `.trim();
 
-      const finalPrompt = `
-Je mag ALLEEN werken met de info hieronder. NIET zelf extra Franse bronnen, telefoonnummers, gemeenten, prijzen, PPR’s of openingstijden verzinnen.
-
-Geef je antwoord ALLEEN in deze 3 blokken:
-
-1. Rode vlaggen (max. 5 bullets)
-2. Wat nu regelen (verzekering / ERP / PLU / servitudes)
-3. Vragen aan verkoper, notaris en makelaar (3×3 bullets)
-
-Als het exacte adres ontbreekt: zeg dat en verwijs naar ERP < 6 maanden + références cadastrales.
-
---- DOSSIER ---
-${dossier}
-      `.trim();
-
-      promptOutput.value = finalPrompt;
+      // we laten de modal zien met de ruwe prompt
+      promptOutput.value = dossier;
       promptModal.style.display = 'block';
 
       let sendBtn = document.getElementById('sendToAiButton');
@@ -182,23 +174,22 @@ ${dossier}
           const resp = await fetch('/api/analyse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dossier: finalPrompt })
+            body: JSON.stringify({ dossier })
           });
-
           const data = await resp.json();
-          console.log('API response:', data);
 
           if (!resp.ok) {
             aiResult.textContent = 'API FOUT:\n' + JSON.stringify(data, null, 2);
-            promptOutput.value =
-              finalPrompt + '\n\n--- API FOUT ---\n' + JSON.stringify(data, null, 2);
-          } else {
-            const out = data.analysis || JSON.stringify(data, null, 2);
-            aiResult.textContent = out;
-            promptOutput.value = finalPrompt + '\n\n--- AI-ANALYSE ---\n' + out;
+            return;
           }
+
+          lastAIText = data.analysis || '';
+          lastSources = Array.isArray(data.sources) ? data.sources : [];
+
+          // standaard: toon alles
+          aiResult.textContent = lastAIText;
         } catch (err) {
-          console.error('JS fetch error:', err);
+          console.error(err);
           aiResult.textContent = 'JS FOUT: ' + err.message;
         } finally {
           sendBtn.textContent = '👍 Verstuur naar AI';
@@ -228,39 +219,25 @@ ${dossier}
     });
   }
 
-  // NIEUW: placeholders voor PDF en notarisbrief
-  if (makePdfBtn) {
-    makePdfBtn.addEventListener('click', () => {
-      const content = promptOutput.value || '(geen prompt gevonden)';
-      alert(
-        'PDF-export komt hier.\n\nVoor nu kun je deze tekst plakken in Word/Docs en als PDF bewaren.\n\nLengte: ' +
-          content.length +
-          ' tekens.'
-      );
+  // need / nice knoppen
+  if (needBtn) {
+    needBtn.addEventListener('click', () => {
+      if (!lastAIText) return;
+      // pak alleen het deel tot OMGEVINGSDOSSIER
+      const splitIdx = lastAIText.indexOf('[OMGEVINGSDOSSIER');
+      const needPart =
+        splitIdx > -1 ? lastAIText.slice(0, splitIdx).trim() : lastAIText.trim();
+      aiResult.textContent = needPart;
     });
   }
 
-  if (notarisBriefBtn) {
-    notarisBriefBtn.addEventListener('click', () => {
-      const dossierTekst = promptOutput.value || '';
-      const briefFr = `Objet : Demande de communication du dossier de diagnostic et de l’ERP (moins de 6 mois)
-
-Maître,
-
-Je vous prie de bien vouloir me communiquer, pour le bien concerné, l’ensemble des pièces suivantes :
-- ERP (État des Risques et Pollutions) de moins de 6 mois,
-- références cadastrales complètes,
-- extrait de PLU ou indication de la zone d’urbanisme applicable,
-- indication d’éventuelles servitudes d’utilité publique.
-
-Cette demande fait suite à une analyse préalable (outil “Immodiagnostique”) basée sur les seules données publiques (Géorisques, DVF, Géoportail Urbanisme). Elle doit donc être confirmée par vos soins.
-
-Je vous remercie par avance.
-
-Cordialement,`;
-
-      // toon in AI-resultaat, maar niet wijzigbaar in textarea
-      aiResult.textContent = briefFr + '\n\n---\n(gegenereerd door Immodiagnostique)';
+  if (niceBtn) {
+    niceBtn.addEventListener('click', () => {
+      if (!lastAIText) return;
+      const splitIdx = lastAIText.indexOf('[OMGEVINGSDOSSIER');
+      const nicePart =
+        splitIdx > -1 ? lastAIText.slice(splitIdx).trim() : '(geen omgevingsdeel)';
+      aiResult.textContent = nicePart + '\n\nBronnen:\n' + lastSources.join('\n');
     });
   }
 });
