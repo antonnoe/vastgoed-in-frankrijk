@@ -1,19 +1,6 @@
-// /api/analyse.js
+// api/analyse.js
+// Franse vastgoedtool – AI-voorbereiding met DVF + context
 export const config = { runtime: 'nodejs' };
-
-const GEMINI_ENDPOINT =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
-
-async function fetchJson(url) {
-  try {
-    const r = await fetch(url);
-    if (!r.ok) return null;
-    return await r.json();
-  } catch (e) {
-    console.error('fetchJson error for', url, e.message);
-    return null;
-  }
-}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -22,123 +9,133 @@ export default async function handler(req, res) {
 
   const { dossier } = req.body || {};
   if (!dossier) {
-    return res.status(400).json({ error: 'dossier is verplicht' });
+    return res.status(400).json({ error: 'Geen dossier ontvangen' });
   }
 
+  // heel simpele plek-zoeker uit het dossier
+  function pickCommune(raw) {
+    // zoek naar "Controleer risico's voor: X"
+    const m =
+      raw.match(/Controleer risico's voor:\s*([^\n]+)/i) ||
+      raw.match(/Controleer DVF voor:\s*([^\n]+)/i);
+    if (m) {
+      return m[1].trim();
+    }
+    return '';
+  }
+
+  const commune = pickCommune(dossier);
+  const encodedCommune = commune ? encodeURIComponent(commune) : '';
+
+  // vaste Franse bronnen die jij noemde
+  const extraSources = [
+    'https://www.georisques.gouv.fr/',
+    commune
+      ? `https://app.dvf.etalab.gouv.fr/?q=${encodedCommune}`
+      : 'https://app.dvf.etalab.gouv.fr/',
+    commune
+      ? `https://www.geoportail-urbanisme.gouv.fr/map/?q=${encodedCommune}`
+      : 'https://www.geoportail-urbanisme.gouv.fr/map/',
+    // jouw extra’s:
+    commune
+      ? `https://en.wikipedia.org/wiki/${encodeURIComponent(commune)}`
+      : 'https://en.wikipedia.org/wiki/France',
+    commune
+      ? `https://www.banatic.interieur.gouv.fr/commune/${commune
+          .replace(/\s+/g, '-')
+          .toLowerCase()}`
+      : 'https://www.banatic.interieur.gouv.fr/',
+    commune
+      ? `https://demarchesadministratives.fr/prefecture/${commune
+          .replace(/\s+/g, '-')
+          .toLowerCase()}`
+      : 'https://demarchesadministratives.fr/'
+  ];
+
+  // we bouwen hier de prompt zoals de frontend ‘m wil hebben
+  const needToKnow = `
+JE BENT EEN FRANSE VASTGOED-ANALIST.
+JE MAG ALLEEN WERKEN MET HET DOSSIER.
+GEEN EXTRA TELEFOONNUMMERS, OPENINGSTIJDEN OF NAMEN VERZINNEN.
+
+Geef ALLEEN dit terug:
+
+[VASTGOED-DOSSIER – NEED TO KNOW]
+- 5 rode vlaggen (max)
+- Wat nu regelen (ERP / PLU / servitudes / verzekering)
+- 3 vragen voor verkoper
+- 3 vragen voor notaris
+- 3 vragen voor makelaar
+
+LET OP: Als exact adres ontbreekt → zeg dat ERP < 6 mnd + références cadastrales MOET.
+Als DVF alleen op gemeente-niveau is → zeg dat en noem de DVF-link.
+  `.trim();
+
+  const niceToKnow = `
+[OMGEVINGSDOSSIER – NICE TO KNOW]
+Geef een kort beeld van de gemeente / intercommunalité / ligging, MAAR:
+- alleen wat logisch uit het dossier volgt (bv. kust, Loire, Dordogne-vallei)
+- verwijs naar de 3 bronnen hieronder voor detail
+- niet langer dan 10 zinnen
+
+[BRONNEN]
+${extraSources.map((u) => `- ${u}`).join('\n')}
+  `.trim();
+
+  // dit gaat mee naar Gemini
+  const finalPrompt = `${needToKnow}
+
+--- DOSSIER ---
+${dossier}
+
+${niceToKnow}
+`;
+
+  // roep Gemini aan
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY ontbreekt in environment' });
-  }
-
-  // 1) heel simpele adres-extractie uit jouw prompt
-  // we zoeken naar een regel die begint met [ADRES / ADVERTENTIE] en pakken de volgende regel
-  let adresRegel = '';
-  const lines = dossier.split('\n');
-  const idx = lines.findIndex((l) => l.trim().toLowerCase().startsWith('[adres / advertentie]'));
-  if (idx !== -1 && lines[idx + 1]) {
-    adresRegel = lines[idx + 1].trim();
-  }
-
-  // 2) BASIS: probeer INSEE te halen uit BAN
-  let insee = '';
-  let banInfo = null;
-  if (adresRegel) {
-    const banUrl =
-      'https://api-adresse.data.gouv.fr/search/?q=' +
-      encodeURIComponent(adresRegel) +
-      '&limit=1';
-    banInfo = await fetchJson(banUrl);
-    const feat = banInfo?.features?.[0];
-    if (feat?.properties?.citycode) {
-      insee = feat.properties.citycode; // bv. 62170 → citycode
-    }
-  }
-
-  // 3) GÉORISQUES op basis van INSEE
-  let georisquesText = 'Geen automatische Géorisques-data (geen INSEE gevonden).';
-  if (insee) {
-    const geoUrl =
-      'https://api.georisques.gouv.fr/v1/catnat?code_insee=' +
-      encodeURIComponent(insee) +
-      '&page=1&page_size=20';
-    const geo = await fetchJson(geoUrl);
-    if (geo?.data) {
-      if (geo.data.length === 0) {
-        georisquesText = `Géorisques: geen erkende CatNat voor INSEE ${insee}.`;
-      } else {
-        georisquesText =
-          `Géorisques: ${geo.data.length} CatNat voor INSEE ${insee} (meest recente eerst).\n` +
-          JSON.stringify(geo.data, null, 2);
-      }
-    }
-  }
-
-  // 4) DVF commune stats
-  let dvfText = 'Geen automatische DVF-data.';
-  if (insee) {
-    const dvfUrl =
-      'https://api.dvf.etalab.gouv.fr/api/latest/stats/commune?code_insee=' +
-      encodeURIComponent(insee);
-    const dvf = await fetchJson(dvfUrl);
-    if (dvf) {
-      dvfText = 'DVF (commune):\n' + JSON.stringify(dvf, null, 2);
-    }
-  }
-
-  // 5) AUTOMATISCHE DATA-HEADER opbouwen
-  const autoBlock = [
-    '--- AUTOMATISCHE DATA (door Immodiagnostique) ---',
-    adresRegel ? `Genormaliseerd adres (BAN poging): ${adresRegel}` : 'Adres kon niet worden gelezen.',
-    insee ? `Gevonden INSEE: ${insee}` : 'INSEE niet gevonden.',
-    '',
-    georisquesText,
-    '',
-    dvfText,
-    '--- EINDE AUTOMATISCHE DATA ---',
-    ''
-  ].join('\n');
-
-  const finalPrompt = autoBlock + dossier;
-
-  // 6) naar Gemini sturen
-  try {
-    const resp = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: finalPrompt
-              }
-            ]
-          }
-        ],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 900
-        }
-      })
+    // we geven ALTIJD iets terug
+    return res.status(200).json({
+      analysis:
+        '⚠️ Geen GEMINI_API_KEY in Vercel.\n\n' +
+        '[VASTGOED-DOSSIER – NEED TO KNOW]\n' +
+        '- ERP < 6 mnd opvragen\n- PLU via Géoportail-Urbanisme\n- DVF checken op gemeente\n\n' +
+        '[OMGEVINGSDOSSIER – NICE TO KNOW]\n' +
+        extraSources.join('\n'),
+      needToKnow,
+      niceToKnow,
+      sources: extraSources
     });
+  }
+
+  try {
+    const resp = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' +
+        apiKey,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: finalPrompt }] }]
+        })
+      }
+    );
 
     const raw = await resp.json();
+
     if (!resp.ok) {
       return res.status(resp.status).json({ error: raw });
     }
 
-    const cand = raw?.candidates?.[0];
-    const parts = cand?.content?.parts || [];
+    const candidate = raw?.candidates?.[0];
+    const parts = candidate?.content?.parts || [];
     const text = parts.map((p) => p.text || '').join('\n').trim();
 
     return res.status(200).json({
-      analysis: text || '(AI gaf geen tekst terug)',
-      auto: {
-        adres: adresRegel || null,
-        insee: insee || null,
-        georisques: georisquesText,
-        dvf: dvfText
-      }
+      analysis: text || '(leeg antwoord van AI)',
+      needToKnow,
+      niceToKnow,
+      sources: extraSources
     });
   } catch (e) {
     return res.status(500).json({ error: e.message });
