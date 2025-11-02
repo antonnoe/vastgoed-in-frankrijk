@@ -6,7 +6,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Alleen POST toegestaan' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY; // <- jouw naam in Vercel
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return res.status(500).json({ error: 'GEMINI_API_KEY ontbreekt op de server' });
   }
@@ -25,25 +25,18 @@ Geef je antwoord ALLEEN in deze 3 blokken:
 2. Wat nu regelen (ERP < 6 mnd / PLU / servitudes / assainissement)
 3. Vragen aan verkoper, notaris en makelaar (3×3 bullets)
 
-Als het adres of het kadastraal nummer ontbreekt: zeg dat kort en zet het onder "Wat nu regelen".
-Geen telefoonnummers, geen openingstijden verzinnen.
-
 --- DOSSIER ---
 ${dossier}
   `.trim();
 
   try {
     const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [
-            {
-              parts: [{ text: prompt }]
-            }
-          ]
+          contents: [{ parts: [{ text: prompt }] }]
         })
       }
     );
