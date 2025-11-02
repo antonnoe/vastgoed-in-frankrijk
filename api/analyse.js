@@ -17,21 +17,24 @@ export default async function handler(req, res) {
   }
 
   const prompt = `
-Je bent een Franse vastgoed-assistent voor NL/BE kopers en eigenaars.
+Je mag ALLEEN werken met de info hieronder. NIET zelf extra Franse bronnen, telefoonnummers, gemeenten, prijzen, PPR’s of openingstijden verzinnen.
 
 Geef je antwoord ALLEEN in deze 3 blokken:
 
 1. Rode vlaggen (max. 5 bullets)
-2. Wat nu regelen (ERP < 6 mnd / PLU / servitudes / assainissement)
+2. Wat nu regelen (verzekering / ERP / PLU / servitudes)
 3. Vragen aan verkoper, notaris en makelaar (3×3 bullets)
+
+Als het exacte adres ontbreekt: zeg dat en verwijs naar ERP < 6 maanden + références cadastrales.
 
 --- DOSSIER ---
 ${dossier}
   `.trim();
 
   try {
-    const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
+    const resp = await fetch(
+      // LET OP: geen -latest
+      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -41,16 +44,27 @@ ${dossier}
       }
     );
 
-    if (!r.ok) {
-      const text = await r.text();
-      return res.status(r.status).json({ error: text });
+    const raw = await resp.json();
+
+    if (!resp.ok) {
+      return res.status(resp.status).json({ error: raw });
     }
 
-    const data = await r.json();
-    const answer =
-      data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('\n') ||
-      'Geen antwoord van Gemini.';
-    return res.status(200).json({ analysis: answer });
+    const candidate = raw?.candidates?.[0];
+    const parts = candidate?.content?.parts;
+    let text = '';
+
+    if (Array.isArray(parts) && parts.length > 0) {
+      text = parts.map((p) => p.text || '').join('\n').trim();
+    }
+
+    if (!text) {
+      text =
+        '⚠️ AI gaf geen tekst terug. Ruwe respons:\n' +
+        JSON.stringify(raw, null, 2);
+    }
+
+    return res.status(200).json({ analysis: text });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
