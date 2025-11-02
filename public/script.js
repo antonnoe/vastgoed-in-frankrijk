@@ -6,7 +6,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const postcodeInput = document.getElementById('postcodeInput');
   const straatInput = document.getElementById('straatInput');
   const huisnummerInput = document.getElementById('huisnummerInput');
-
   const advertLinkInput = document.getElementById('advertLinkInput');
 
   const dashboardTegels = document.getElementById('dashboardTegels');
@@ -44,7 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // 1. Dossier bouwen
+  // dossier maken
   genereerButton.addEventListener('click', () => {
     const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
     let plaats = plaatsInput.value.trim();
@@ -52,7 +51,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const straat = straatInput.value.trim();
     const huisnummer = huisnummerInput.value.trim();
 
-    // advertentie-modus
     if (advertUrl) {
       if (!plaats) {
         const guessed = extractCityFromGreenAcres(advertUrl);
@@ -61,9 +59,8 @@ document.addEventListener('DOMContentLoaded', () => {
           plaatsInput.value = guessed;
         }
       }
-
       if (!plaats) {
-        alert('De advertentie verbergt de plaats. Vul de plaatsnaam even in.');
+        alert('Vul even de plaatsnaam in.');
         return;
       }
 
@@ -71,33 +68,26 @@ document.addEventListener('DOMContentLoaded', () => {
       actieKnoppenContainer.style.display = 'flex';
 
       notesAdres.value =
-        `Advertentie: ${advertUrl}\n` +
-        `Gevonden plaats: ${plaats}${postcode ? ' (' + postcode + ')' : ''}\n` +
-        `Let op: exact adres wordt niet vrijgegeven.\n` +
-        `Vraag bij makelaar/notaris:\n- exact adres\n- références cadastrales\n- ERP < 6 maanden\n`;
+        `Advertentie: ${advertUrl}\nGevonden plaats: ${plaats}${postcode ? ' (' + postcode + ')' : ''}\n` +
+        `Vraag bij makelaar/notaris: exact adres, références cadastrales, ERP < 6 mnd.\n`;
 
       notesRisques.value =
-        `Controleer risico's voor: ${plaats}\n` +
-        `https://www.georisques.gouv.fr/\n` +
-        `Als traag/offline: ERP opvragen.\n`;
+        `Controleer risico's voor: ${plaats}\nhttps://www.georisques.gouv.fr/\nAls traag: ERP via notaris.\n`;
 
       notesDvf.value =
-        `Controleer DVF (gemeente-niveau):\n` +
-        `https://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
-        `Als traag: https://www.data.gouv.fr → "dvf"\n` +
-        `Zonder perceel alleen indicatief.\n`;
+        `Controleer DVF (gemeente):\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
+        `Als traag: https://www.data.gouv.fr → "dvf"\n`;
 
       if (!notesPlu.value) {
         notesPlu.value =
-          `PLU / SUP voor: ${plaats}\n` +
-          `https://www.geoportail-urbanisme.gouv.fr/map/\n` +
-          `Noteer zone (U, AU, A, N) + servitudes.\n`;
+          `PLU / SUP:\nhttps://www.geoportail-urbanisme.gouv.fr/map/\n` +
+          `Noteer zone + servitudes.\n`;
       }
 
       return;
     }
 
-    // adres-modus
+    // adresmodus
     if (!plaats) {
       alert('Plaatsnaam is verplicht');
       return;
@@ -111,23 +101,19 @@ document.addEventListener('DOMContentLoaded', () => {
       `(exact perceel later opvragen bij notaris)\n`;
 
     notesRisques.value =
-      `Controleer risico's voor: ${plaats}\n` +
-      `https://www.georisques.gouv.fr/\n` +
-      `Als traag/offline: ERP via verkoper/notaris (max 6 mnd).\n`;
+      `Controleer risico's voor: ${plaats}\nhttps://www.georisques.gouv.fr/\nAls traag/offline: ERP bij notaris.\n`;
 
     notesDvf.value =
-      `Controleer DVF voor: ${plaats}\n` +
-      `https://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
+      `Controleer DVF voor: ${plaats}\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
       `Als traag/offline: https://www.data.gouv.fr → "dvf"\n`;
 
     if (!notesPlu.value) {
       notesPlu.value =
-        `PLU / SUP via:\nhttps://www.geoportail-urbanisme.gouv.fr/map/\n` +
-        `Noteer zone + beperkingen.\n`;
+        `PLU / SUP via:\nhttps://www.geoportail-urbanisme.gouv.fr/map/\nNoteer zone + beperkingen.\n`;
     }
   });
 
-  // 2. Prompt tonen en AI-knop maken
+  // prompt + send-to-ai
   if (promptButton) {
     promptButton.addEventListener('click', () => {
       const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
@@ -142,13 +128,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const dossier = `
 [ADRES / ADVERTENTIE]
-${advertUrl ? advertUrl : (adresRegel || 'Geen volledig adres bekend')}
+${advertUrl ? advertUrl : (adresRegel || 'Geen volledig adres')}
 
 [RISICO'S (GÉORISQUES)]
-${notesRisques.value || 'Geen notities ingevoerd.'}
+${notesRisques.value || 'Geen notities'}
 
 [VERKOOPPRIJZEN (DVF)]
-${notesDvf.value || 'Geen notities ingevoerd.'}
+${notesDvf.value || 'Geen notities'}
 
 [KADASTER / ADRES]
 ${notesAdres.value || 'Geen kadastrale info.'}
@@ -180,78 +166,40 @@ ${dossier}
         sendBtn = document.createElement('button');
         sendBtn.id = 'sendToAiButton';
         sendBtn.textContent = '👍 Verstuur naar AI';
-        sendBtn.style.marginTop = '0.75rem';
+        sendBtn.style.marginTop = '0.5rem';
         promptOutput.parentNode.appendChild(sendBtn);
-
-        sendBtn.addEventListener('click', async () => {
-          sendBtn.textContent = 'Bezig...';
-          aiResult.textContent = 'AI wordt aangeroepen...';
-          try {
-            const resp = await fetch('/api/analyse', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ dossier: finalPrompt })
-            });
-            const data = await resp.json();
-            if (!resp.ok) {
-              const errText =
-                typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-              promptOutput.value =
-                finalPrompt + '\n\n--- AI FOUT ---\n' + errText;
-              aiResult.textContent = 'AI FOUT:\n' + errText;
-            } else {
-              const out =
-                data.analysis && data.analysis.trim().length > 0
-                  ? data.analysis
-                  : '⚠️ lege analyse ontvangen (mogelijk safety)';
-              promptOutput.value =
-                finalPrompt + '\n\n--- AI-ANALYSE ---\n' + out;
-              aiResult.textContent = out;
-            }
-          } catch (e) {
-            promptOutput.value =
-              finalPrompt + '\n\n--- AI FOUT (JS) ---\n' + e.message;
-            aiResult.textContent = 'AI FOUT (JS): ' + e.message;
-          } finally {
-            sendBtn.textContent = '👍 Verstuur naar AI';
-          }
-        });
-      } else {
-        // prompt is nieuw, maar knop bestond al
-        sendBtn.onclick = async () => {
-          sendBtn.textContent = 'Bezig...';
-          aiResult.textContent = 'AI wordt aangeroepen...';
-          try {
-            const resp = await fetch('/api/analyse', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ dossier: finalPrompt })
-            });
-            const data = await resp.json();
-            if (!resp.ok) {
-              const errText =
-                typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-              promptOutput.value =
-                finalPrompt + '\n\n--- AI FOUT ---\n' + errText;
-              aiResult.textContent = 'AI FOUT:\n' + errText;
-            } else {
-              const out =
-                data.analysis && data.analysis.trim().length > 0
-                  ? data.analysis
-                  : '⚠️ lege analyse ontvangen (mogelijk safety)';
-              promptOutput.value =
-                finalPrompt + '\n\n--- AI-ANALYSE ---\n' + out;
-              aiResult.textContent = out;
-            }
-          } catch (e) {
-            promptOutput.value =
-              finalPrompt + '\n\n--- AI FOUT (JS) ---\n' + e.message;
-            aiResult.textContent = 'AI FOUT (JS): ' + e.message;
-          } finally {
-            sendBtn.textContent = '👍 Verstuur naar AI';
-          }
-        };
       }
+
+      sendBtn.onclick = async () => {
+        sendBtn.textContent = 'Bezig...';
+        aiResult.textContent = 'AI wordt aangeroepen...';
+
+        try {
+          const resp = await fetch('/api/analyse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dossier: finalPrompt })
+          });
+
+          const data = await resp.json();
+          console.log('API response:', data);
+
+          if (!resp.ok) {
+            aiResult.textContent = 'API FOUT:\n' + JSON.stringify(data, null, 2);
+            promptOutput.value =
+              finalPrompt + '\n\n--- API FOUT ---\n' + JSON.stringify(data, null, 2);
+          } else {
+            const out = data.analysis || JSON.stringify(data, null, 2);
+            aiResult.textContent = out;
+            promptOutput.value = finalPrompt + '\n\n--- AI-ANALYSE ---\n' + out;
+          }
+        } catch (err) {
+          console.error('JS fetch error:', err);
+          aiResult.textContent = 'JS FOUT: ' + err.message;
+        } finally {
+          sendBtn.textContent = '👍 Verstuur naar AI';
+        }
+      };
     });
   }
 
@@ -272,7 +220,7 @@ ${dossier}
       promptOutput.select();
       document.execCommand('copy');
       kopieerPromptButton.textContent = 'Gekopieerd!';
-      setTimeout(() => (kopieerPromptButton.textContent = 'Kopieer naar klembord'), 2000);
+      setTimeout(() => (kopieerPromptButton.textContent = 'Kopieer naar klembord'), 1500);
     });
   }
 });
