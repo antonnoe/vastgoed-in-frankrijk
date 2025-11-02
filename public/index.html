@@ -1,47 +1,38 @@
-<!-- public/index.html -->
 <!DOCTYPE html>
 <html lang="nl">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Immodiagnostique – Vastgoed Kompas</title>
-    <link rel="stylesheet" href="style.css" />
-  </head>
-  <body>
-    <header class="topbar">
-      <div class="brand">
-        <div class="logo-icon">
-          <!-- simpel logo -->
-          <svg width="26" height="26" viewBox="0 0 26 26">
-            <rect x="5" y="5" width="16" height="16" stroke="#800000" fill="none" />
-          </svg>
-        </div>
-        <div class="brand-text">
-          <div class="logo-text">IMMODIAGNOSTIQUE</div>
-          <div class="subtext">Een concept van Infofrankrijk.com</div>
-        </div>
-      </div>
-      <div class="intro">Hybride due diligence voor Frans vastgoed</div>
-    </header>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Immodiagnostique — Indicatieve vastgoedanalyse</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-texts">
+      <h1>IMMODIAGNOSTIQUE</h1>
+      <h2>Indicatieve vastgoedanalyse</h2>
+      <p class="byline">Een concept van Infofrankrijk.com</p>
+    </div>
+  </header>
 
-    <div class="tab-container">
-      <div class="tab-buttons">
-        <button class="tab-button active">Hybride Dossier Generator</button>
+  <main class="page-shell">
+    <section class="tool-card">
+      <div class="tool-header">
+        <h3>Hybride Dossier Generator</h3>
+        <p>Vul één adres in, óf plak een advertentielink. Je kunt ook de advertentietekst plakken.</p>
       </div>
 
-      <div id="DossierDashboard" class="tab-content active">
-        <h2>Stap 1: Genereer het dossier</h2>
-        <p>Vul óf een adres in, óf plak een advertentielink. Je kunt ook de advertentietekst plakken.</p>
+      <form class="form-grid" onsubmit="return false;">
+        <div class="input-veld full-width">
+          <label for="advertLinkInput">Advertentielink (optioneel)</label>
+          <input
+            type="text"
+            id="advertLinkInput"
+            placeholder="https://www.green-acres.fr/en/properties/property/..."
+          />
+        </div>
 
-        <div class="form-grid">
-          <div class="input-veld">
-            <label for="advertLinkInput">Advertentielink (optioneel)</label>
-            <input
-              type="text"
-              id="advertLinkInput"
-              placeholder="https://www.green-acres.fr/..."
-            />
-          </div>
+        <div class="input-row-3">
           <div class="input-veld">
             <label for="plaatsInput">Plaatsnaam (verplicht)</label>
             <input type="text" id="plaatsInput" placeholder="Bijv: Biarritz" />
@@ -60,99 +51,71 @@
           </div>
         </div>
 
-        <div class="input-veld" style="margin-top: 1rem">
+        <div class="input-veld advertentie-tekst">
           <label for="advertTextInput">Advertentietekst (optioneel)</label>
+          <textarea id="advertTextInput" placeholder="Plak hier de volledige advertentie (Ctrl+A → Ctrl+C → Ctrl+V)…"></textarea>
+        </div>
+
+        <div class="center-buttons">
+          <button id="genereerButton" type="button" class="btn-primary">Genereer dossier</button>
+        </div>
+      </form>
+
+      <div id="dashboardTegels" class="tegels-container" style="display: none">
+        <article class="tegel">
+          <header><h4>1. Officieel adres / advertentie</h4></header>
+          <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
+        </article>
+
+        <article class="tegel">
+          <header><h4>2. Risico's (Géorisques)</h4></header>
+          <textarea id="notes-risques" class="tegel-textarea" readonly></textarea>
+        </article>
+
+        <article class="tegel">
+          <header><h4>3. Verkoopprijzen (DVF)</h4></header>
+          <textarea id="notes-dvf" class="tegel-textarea" readonly></textarea>
+        </article>
+
+        <article class="tegel">
+          <header><h4>4. Bestemmingsplan (PLU)</h4></header>
+          <p class="tegel-help">Controleer zelf in Géoportail en plak hier de regels.</p>
+          <a
+            href="https://www.geoportail-urbanisme.gouv.fr/map/"
+            class="tegel-link"
+            target="_blank"
+            rel="noreferrer"
+            >Open PLU-kaart</a
+          >
           <textarea
-            id="advertTextInput"
-            rows="5"
-            placeholder="Plak hier de volledige tekst van de advertentie (CTRL+A → CTRL+C → CTRL+V)…"
+            id="notes-plu"
+            class="tegel-textarea"
+            placeholder="Zone U / AU / A / N, SUP, erfdienstbaarheden…"
           ></textarea>
-        </div>
-
-        <div class="button-container">
-          <button id="genereerButton">Genereer dossier</button>
-        </div>
-
-        <div id="dashboardTegels" class="tegels-container" style="display: none">
-          <div class="tegel">
-            <div class="tegel-header"><h3>1. Officieel adres / advertentie</h3></div>
-            <div class="tegel-body">
-              <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
-            </div>
-          </div>
-
-          <div class="tegel">
-            <div class="tegel-header"><h3>2. Risico's (Géorisques)</h3></div>
-            <div class="tegel-body">
-              <textarea id="notes-risques" class="tegel-textarea" readonly></textarea>
-            </div>
-          </div>
-
-          <div class="tegel">
-            <div class="tegel-header"><h3>3. Verkoopprijzen (DVF)</h3></div>
-            <div class="tegel-body">
-              <textarea id="notes-dvf" class="tegel-textarea" readonly></textarea>
-            </div>
-          </div>
-
-          <div class="tegel handmatig">
-            <div class="tegel-header"><h3>4. Bestemmingsplan (PLU)</h3></div>
-            <div class="tegel-body">
-              <p>Controleer zelf in Géoportail en plak hier de regels.</p>
-              <a
-                href="https://www.geoportail-urbanisme.gouv.fr/map/"
-                class="tegel-knop"
-                target="_blank"
-                >Open PLU-kaart</a
-              >
-              <textarea
-                id="notes-plu"
-                class="tegel-textarea"
-                placeholder="Zone U / AU / A / N, SUP, erfdienstbaarheden..."
-              ></textarea>
-            </div>
-          </div>
-        </div>
-
-        <div id="actieKnoppenContainer" class="actie-knoppen" style="display: none">
-          <button id="promptButton" class="actie-knop prompt">🚀 Genereer AI-prompt</button>
-        </div>
+        </article>
       </div>
-    </div>
+
+      <div id="actieKnoppenContainer" class="center-buttons" style="display: none">
+        <button id="promptButton" type="button" class="btn-secondary">Maak AI-prompt</button>
+      </div>
+    </section>
 
     <!-- Modal -->
     <div id="promptModal" class="modal">
       <div class="modal-content">
         <span class="modal-close" id="modalClose">&times;</span>
-        <h2>Prompt & AI-resultaat</h2>
+        <h3>AI-prompt & resultaat</h3>
         <textarea id="promptOutput" readonly></textarea>
-        <button id="kopieerPromptButton">Kopieer naar klembord</button>
+        <div class="modal-buttons">
+          <button id="kopieerPromptButton" type="button" class="btn-ghost">Kopieer naar klembord</button>
+        </div>
       </div>
     </div>
 
-    <!-- Resultaat + knoppen -->
-    <div style="max-width: 960px; margin: 2rem auto">
-      <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem">
-        <button id="showNeed">Vastgoed-dossier</button>
-        <button id="showNice">Omgevingsdossier</button>
-      </div>
-      <div
-        id="aiResult"
-        style="
-          background: #fff;
-          border: 1px solid rgba(128, 0, 0, 0.1);
-          border-radius: 0.75rem;
-          padding: 1rem;
-          white-space: pre-wrap;
-          min-height: 160px;
-        "
-      ></div>
-      <p style="font-size: 0.7rem; color: #5f6b7a; margin-top: 0.5rem">
-        Disclaimer: deze analyse is een hulpmiddel. Raadpleeg altijd notaris, mairie en officiële
-        Franse bronnen voor je beslist.
-      </p>
-    </div>
+    <!-- Resultaat (onderaan) -->
+    <section id="aiResult" class="ai-result"></section>
+  </main>
 
-    <script src="script.js"></script>
-  </body>
+  <script src="script.js"></script>
+</body>
 </html>
