@@ -1,13 +1,16 @@
-// /api/compose.js (ESM, STRIKT)
-// Vercel Serverless Function — POST { role, dossier }
-// Doel: consistente brieven genereren per rol met taal/structuur-validatie en auto-retry.
-// Vereisten: Env var GEMINI_API_KEY (Vercel → Settings → Environment Variables)
+// /api/compose.js (ESM, kanaal-ondersteuning + strikte rollen)
+// POST { role, dossier, channel? }  where role ∈ [notary-fr, agent-nl, seller-mixed]
+// channel ∈ [email, pb, phone, letter]  (default: email)
+//
+// Policies:
+// - REST naar Google Gemini (geen SDK). Default model: gemini-2.0-flash; fallback: gemini-1.5-flash-latest.
+// - Rate limit: 1 req/sec, max 8/min. 429 -> backoff 2s, dan 4s.
+// - 404/NOT_FOUND -> switch model.
+// - GEEN API key client-side; leest GEMINI_API_KEY uit env.
 
 const DEFAULT_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash-latest"];
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
-// ——— In-memory rate limiting (per instance, best-effort) ———
-// Regels: 1 req/sec, max 8 req/min.
 const calls = [];
 const nowMs = () => Date.now();
 function pruneCalls() {
@@ -30,7 +33,6 @@ async function enforceRateLimit() {
   calls.push(nowMs());
 }
 
-// ——— Helpers (HTTP/JSON) ———
 function sendJson(res, status, data) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -46,7 +48,6 @@ function getApiKey() {
   return key;
 }
 
-// ——— Rollen en labels ———
 const ROLE_LABELS = {
   "notary-fr": "Notaris (Frans)",
   "agent-nl": "Makelaar (Nederlands)",
@@ -54,27 +55,35 @@ const ROLE_LABELS = {
 };
 const VALID_ROLES = Object.keys(ROLE_LABELS);
 
-// ——— Promptbouw met few-shots en strikte regels ———
-function buildPrompt(role, dossier) {
+const CHANNELS = ["email", "pb", "phone", "letter"];
+
+// ——— Promptbouw ———
+function buildPrompt(role, channel, dossier) {
   const baseRules = [
-    "DOEL: Schrijf een beknopte, formele brief op basis van UITSLUITEND het aangeleverde dossier.",
-    "GEEN externe feiten, GEEN links, GEEN verzinsels.",
-    "STRUCTUUR (VERPLICHT):",
-    "- Eerste regel: <PLAATS>, <DATUM>",
-    "- Onderwerpregel:",
-    "  * FR: 'Objet:'",
-    "  * NL: 'Onderwerp:' of 'Subject / Onderwerp:'",
-    "- Aanhef: formeel (FR of NL naargelang de taal).",
-    "- Kern: puntsgewijs, kort, zakelijk; adresseer dossierpunten.",
-    "- Afsluiting: formeel; gebruik placeholders <NAAM>, <ADRES> indien relevant.",
-    "- Laatste regel: 'Dit bericht is indicatief; raadpleeg officiële bronnen en professionals.'",
-    "GEBRUIK PLACEHOLDERS ALTIJD: <PLAATS>, <DATUM>, <NAAM>, <ADRES>."
+    "WERKWIJZE:",
+    "- Gebruik UITSLUITEND het dossier hieronder; geen externe feiten of links.",
+    "- KORT, concreet, toepasbaar.",
+    "- Gebruik placeholders: <PLAATS>, <DATUM>, <NAAM>, <ADRES> indien passend.",
+    "",
+    "Rollen en talen (VERPLICHT):",
+    "- notary-fr: ALLES in het FRANS.",
+    "- agent-nl: ALLES in het NEDERLANDS.",
+    "- seller-mixed: TWEE BLOKKEN: eerst FR, dan NL.",
+    "",
+    "Kanalen en structuur (VOLG EXACT):",
+    "- email: bevat onderwerpregel (FR: 'Objet:' / NL: 'Onderwerp:'), formele aanhef, compacte body, formele afsluiting, afsluitende disclaimer.",
+    "- pb (persoonlijk bericht): GEEN onderwerpregel; direct en kort; geen formele adressering; wel nette afsluiting + disclaimer.",
+    "- phone: GEEN onderwerp/aanhef; geef een puntsgewijs belscript: Intro (1–2 zinnen), Kernvragen (3–6 bullets), Afsluiting (1–2 bullets), gevolgd door disclaimer.",
+    "- letter: formele brief met onderwerpregel, aanhef, body, formele afsluiting, adres/naam placeholders en disclaimer.",
+    "",
+    "Vastgoedcontext die bijna altijd geldt:",
+    "- ERP (≤ 6 maanden) nodig zodra adres bekend is.",
+    "- DVF is op gemeenteniveau (niet per adres).",
+    "- Vraag om kadastrale referenties en servitudes wanneer relevant."
   ].join("\n");
 
-  // Few-shot mini-voorbeelden per rol (extreem kort, stijl-anker)
-  const fewshotNotaryFR = [
-    "EXEMPEL FR (très court):",
-    "<PLAATS>, <DATUM>",
+  const fewshotEmailFR = [
+    "EXEMPEL EMAIL FR:",
     "Objet: Demande d’informations cadastrales et ERP",
     "Madame, Monsieur,",
     "- Merci de communiquer les références cadastrales (section, n° de parcelle) et les servitudes éventuelles.",
@@ -85,21 +94,42 @@ function buildPrompt(role, dossier) {
     "Ce message est indicatif; consultez les sources officielles et des professionnels."
   ].join("\n");
 
-  const fewshotAgentNL = [
-    "EXEMPEL NL (heel kort):",
-    "<PLAATS>, <DATUM>",
-    "Onderwerp: Informatieaanvraag verkoopdata en kadastrale gegevens",
+  const fewshotEmailNL = [
+    "EXEMPEL EMAIL NL:",
+    "Onderwerp: Informatieaanvraag kadastrale gegevens en recente verkopen",
     "Geachte heer/mevrouw,",
     "- Graag ontvang ik het exacte adres en de kadastrale referenties.",
-    "- Daarnaast verzoek ik om recente vergelijkbare verkopen in de directe omgeving.",
+    "- Daarnaast recente vergelijkbare verkopen (naast DVF op gemeenteniveau).",
     "Met vriendelijke groet,",
     "<NAAM>",
     "<ADRES>",
     "Dit bericht is indicatief; raadpleeg officiële bronnen en professionals."
   ].join("\n");
 
-  const fewshotSellerMixed = [
-    "EXEMPEL TWEETALIG (FR + NL, in deze volgorde):",
+  const fewshotPB = [
+    "EXEMPEL PB (kort, geen onderwerp/aanhef):",
+    "- Ik ben geïnteresseerd in het pand. Kunt u het exacte adres/kadasternummer en een recent ERP (≤ 6 mnd) delen?",
+    "- Ook hoor ik graag recente vergelijkbare verkopen in de buurt.",
+    "Alvast dank! <NAAM>",
+    "Dit bericht is indicatief; raadpleeg officiële bronnen en professionals."
+  ].join("\n");
+
+  const fewshotPhone = [
+    "EXEMPEL PHONE (belscript):",
+    "Intro:",
+    "- Goedendag, u spreekt met <NAAM>. Ik bel over het pand in <PLAATS>.",
+    "Kernvragen:",
+    "- Kunt u het exacte adres en kadastrale referenties bevestigen?",
+    "- Is er een ERP (≤ 6 maanden) beschikbaar?",
+    "- Zijn er bekende servitudes of bijzonderheden?",
+    "- Zijn er recente vergelijkbare verkopen in de directe omgeving?",
+    "Afsluiting:",
+    "- Dank u wel. Kunt u de documenten mailen? Mijn e-mail: <ADRES>.",
+    "Dit bericht is indicatief; raadpleeg officiële bronnen en professionals."
+  ].join("\n");
+
+  const fewshotLetterFRNL = [
+    "EXEMPEL LETTER SELLER-MIXED:",
     "FR",
     "<PLAATS>, <DATUM>",
     "Objet: Demande ERP, références cadastrales et servitudes",
@@ -121,36 +151,30 @@ function buildPrompt(role, dossier) {
     "Dit bericht is indicatief; raadpleeg officiële bronnen en professionals."
   ].join("\n");
 
+  // Rol-specificatie
   let roleBlock = "";
   if (role === "notary-fr") {
     roleBlock = [
-      "TAAL: FRANS. ALLES in het FRANS.",
-      "ADRESSEE: Notaire.",
-      "INHOUD (SAMENVATTING):",
-      "- Références cadastrales, servitudes.",
-      "- ERP (≤ 6 mois).",
-      "- Mention que DVF est au niveau communal.",
-      fewshotNotaryFR
+      "TAAL: FRANS (hele output).",
+      channel === "email" ? fewshotEmailFR : channel === "pb" ? fewshotPB : channel === "phone" ? fewshotPhone : fewshotEmailFR
     ].join("\n");
   } else if (role === "agent-nl") {
     roleBlock = [
-      "TAAL: NEDERLANDS. ALLES in het NEDERLANDS.",
-      "ADRESSEE: Makelaar.",
-      "INHOUD (SAMENVATTING):",
-      "- Exacte adres/kadastrale gegevens.",
-      "- Recente vergelijkbare verkopen (naast DVF op gemeenteniveau).",
-      "- Bekende aandachtspunten/gebreken/lopende dossiers.",
-      fewshotAgentNL
+      "TAAL: NEDERLANDS (hele output).",
+      channel === "email" ? fewshotEmailNL : channel === "pb" ? fewshotPB : channel === "phone" ? fewshotPhone : fewshotEmailNL
     ].join("\n");
   } else {
-    // seller-mixed
+    // seller-mixed (FR + NL)
+    // Bij email/letter handhaven we tweetalige briefvorm; bij pb/phone maken we twee blokken met kopjes FR/NL.
     roleBlock = [
       "TAAL: TWEETALIG. EERST FRANS-BLOK, DAN NEDERLANDS-BLOK.",
-      "BOUW:",
-      "- Kop 'FR' op eigen regel; daarna FR-brief.",
-      "- Daarna een lege regel en kop 'NL'; vervolgens NL-brief.",
-      "- Beide brieven moeten de STRUCTUUR volgen en inhoudelijk equivalent zijn.",
-      fewshotSellerMixed
+      "STRUCTUUR:",
+      channel === "phone"
+        ? "- Geef twee belscripts: eerst 'FR', dan 'NL', elk met Intro/Kernvragen/Afsluiting bullets."
+        : channel === "pb"
+          ? "- Geef twee PB-teksten: kop 'FR', kort PB-bericht; lege regel; kop 'NL', kort PB-bericht."
+          : "- Geef twee brieven (FR daarna NL) met onderwerp/aanhef/body/afsluiting.",
+      fewshotLetterFRNL
     ].join("\n");
   }
 
@@ -159,16 +183,17 @@ function buildPrompt(role, dossier) {
     "",
     "ROL:",
     ROLE_LABELS[role] || role,
+    "KANAAL:",
+    channel,
     "",
-    "DOSSIER (enkel input; niet citeren tenzij nodig):",
+    "DOSSIER (alleen als context, citeer spaarzaam):",
     dossier,
     "",
-    "VOLG DEZE INSTRUCTIES STRENG EN EXACT.",
-    roleBlock
-  ].join("\n");
+    "VOLG DE ROL- EN KANAALREGELS STRIKT. PRODUCEER ENKEL DE TEKST (geen JSON of codefences)."
+  ].join("\n") + "\n\n" + roleBlock;
 }
 
-// ——— Gemini-call + policy (backoff + fallback) ———
+// ——— Gemini-call + policy ———
 async function callGeminiOnce({ model, text, apiKey }) {
   const url = `${GEMINI_ENDPOINT}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const body = { contents: [{ parts: [{ text }] }] };
@@ -193,9 +218,7 @@ async function callGeminiOnce({ model, text, apiKey }) {
   try {
     const parts = payload?.candidates?.[0]?.content?.parts || [];
     textOut = parts.map(p => p.text || "").join("").trim();
-  } catch {
-    // noop
-  }
+  } catch {}
   return { text: textOut, raw: payload };
 }
 
@@ -241,9 +264,9 @@ async function callGeminiWithPolicy({ prompt, apiKey, models = DEFAULT_MODELS })
 
       const notFoundMsg = (err.payload && (err.payload.error?.status || err.payload.error?.message || "")).toString();
       if (err.status === 404 || /NOT_FOUND/i.test(notFoundMsg)) {
-        continue; // volgende model
+        continue;
       }
-      continue; // andere fout → ook fallback proberen
+      continue;
     }
   }
 
@@ -260,114 +283,137 @@ async function callGeminiWithPolicy({ prompt, apiKey, models = DEFAULT_MODELS })
   throw e;
 }
 
-// ——— Validatie & normalisatie ———
+// ——— Validatie/normalisatie ———
 function looksFrench(s = "") {
-  const frWords = ["Madame", "Monsieur", "Objet", "Veuillez", "références", "cadastrales", "servitudes", "ERP", "Veuillez agréer"];
+  const frWords = ["Madame", "Monsieur", "Objet", "Veuillez", "références", "cadastrales", "servitudes", "Veuillez agréer"];
   const diacritics = /[éèêëàâîïôöûüç]/i.test(s);
   const hits = frWords.reduce((n, w) => n + (s.includes(w) ? 1 : 0), 0);
   return diacritics || hits >= 2;
 }
 function looksDutch(s = "") {
-  const nlWords = ["Geachte", "Onderwerp", "Met vriendelijke groet", "erfdienstbaarheden", "kadastrale", "gegevens", "bij voorbaat"];
+  const nlWords = ["Geachte", "Onderwerp", "Met vriendelijke groet", "erfdienstbaarheden", "kadastrale", "bij voorbaat"];
   const hits = nlWords.reduce((n, w) => n + (s.includes(w) ? 1 : 0), 0);
   return hits >= 2;
 }
-function hasPlaceholders(s = "") {
-  return /<PLAATS>/.test(s) && /<DATUM>/.test(s);
-}
-function ensurePlaceholders(text) {
-  let t = text;
-  if (!/<PLAATS>/.test(t)) t = t.replace(/^\s*/, "<PLAATS>, <DATUM>\n");
-  if (!/<DATUM>/.test(t)) {
-    if (!/<PLAATS>/.test(t)) t = "<PLAATS>, <DATUM>\n" + t;
+function hasSubjectFR(s=""){ return /^Objet\s*:/mi.test(s); }
+function hasSubjectNL(s=""){ return /^(Onderwerp|Subject\s*\/\s*Onderwerp)\s*:/mi.test(s); }
+function ensurePlaceholdersBlock(t){
+  let out = t.trim();
+  if (!/<PLAATS>/.test(out) || !/<DATUM>/.test(out)) {
+    out = `<PLAATS>, <DATUM>\n` + out;
   }
-  if (!/<NAAM>/.test(t)) t += "\n<NAAM>";
-  if (!/<ADRES>/.test(t)) t += "\n<ADRES>";
-  return t;
+  if (!/<NAAM>/.test(out)) out += `\n<NAAM>`;
+  if (!/<ADRES>/.test(out)) out += `\n<ADRES>`;
+  return out.trim();
 }
-function standardizeSubjectHeaders(text, lang) {
-  let t = text;
-  if (lang === "FR") {
-    if (!/^Objet:/m.test(t)) {
-      t = t.replace(/^(Subject\s*\/\s*Objet|Onderwerp|Subject|Objet)\s*:/mi, "Objet:");
-      if (!/^Objet:/m.test(t)) {
-        t = t.replace(/^(Madame|Monsieur|Madame, Monsieur)/m, "Objet: (à compléter)\n$1");
-      }
-    }
-  } else if (lang === "NL") {
-    if (!/^(Onderwerp|Subject\s*\/\s*Onderwerp)\s*:/mi.test(t)) {
-      t = t.replace(/^Onderwerp\s*:/mi, "Onderwerp:");
-      if (!/^(Onderwerp|Subject\s*\/\s*Onderwerp)\s*:/mi.test(t)) {
-        t = t.replace(/^(Geachte|Beste)/m, "Onderwerp: (in te vullen)\n$1");
-      }
-    }
-  }
-  return t;
-}
-function normalizeOutputByRole(role, text) {
-  let t = text.trim();
+
+function normalizeByRoleAndChannel(role, channel, text) {
+  let t = String(text || "").trim();
 
   if (role === "notary-fr") {
-    t = ensurePlaceholders(t);
-    t = standardizeSubjectHeaders(t, "FR");
+    if (channel === "email" || channel === "letter") {
+      if (!hasSubjectFR(t)) t = `Objet: (à compléter)\n` + t;
+      t = ensurePlaceholdersBlock(t);
+    } else if (channel === "pb") {
+      // geen onderwerp/aanhef verplicht; kort houden
+      t = t.replace(/^Objet\s*:.*$/gmi, "").trim();
+    } else if (channel === "phone") {
+      // verwacht bullets, laat tekst ongemoeid
+    }
   } else if (role === "agent-nl") {
-    t = ensurePlaceholders(t);
-    t = standardizeSubjectHeaders(t, "NL");
+    if (channel === "email" || channel === "letter") {
+      if (!hasSubjectNL(t)) t = `Onderwerp: (in te vullen)\n` + t;
+      t = ensurePlaceholdersBlock(t);
+    } else if (channel === "pb") {
+      t = t.replace(/^(Onderwerp|Subject\s*\/\s*Onderwerp)\s*:.*$/gmi, "").trim();
+    } else if (channel === "phone") {
+      // bullets verwacht
+    }
   } else {
     // seller-mixed
-    // Splits op FR/NL kopjes of forceer structuur.
-    const hasFR = /^\s*FR\s*$/m.test(t);
-    const hasNL = /^\s*NL\s*$/m.test(t);
+    const hasFR = /(^|\n)FR\s*\n/.test(t);
+    const hasNL = /(^|\n)NL\s*\n/.test(t);
     if (!(hasFR && hasNL)) {
-      // probeer heuristisch te markeren
-      if (looksFrench(t) && looksDutch(t)) {
-        // voeg kopjes toe als ze ontbreken
-        const mid = Math.floor(t.length / 2);
-        t = "FR\n" + t.slice(0, mid).trim() + "\n\nNL\n" + t.slice(mid).trim();
-      } else {
-        // fallback: dupliceer kern in twee talen is onmogelijk hier; laat validatie/reprompt beslissen
-      }
+      // forceer eenvoudige splitsing als ontbrekend
+      const half = Math.floor(t.length / 2);
+      t = `FR\n${t.slice(0, half).trim()}\n\nNL\n${t.slice(half).trim()}`;
     }
-    // Zorg voor placeholders en subjectregels in beide blokken
-    t = t
-      .replace(/^\s*FR\s*$/m, "FR")
-      .replace(/^\s*NL\s*$/m, "NL");
-    // Per blok normaliseren
-    t = t.replace(/(^FR[\r\n]+)([\s\S]*?)(?=\nNL\b|$)/, (m, tag, block) => {
-      let b = ensurePlaceholders(block);
-      b = standardizeSubjectHeaders(b, "FR");
-      return `${tag}${b.trim()}\n`;
-    });
-    t = t.replace(/(^NL[\r\n]+)([\s\S]*)$/, (m, tag, block) => {
-      let b = ensurePlaceholders(block);
-      b = standardizeSubjectHeaders(b, "NL");
-      return `${tag}${b.trim()}`;
-    });
+    if (channel === "email" || channel === "letter") {
+      // Voeg placeholders/subjects toe binnen elk blok
+      t = t.replace(/(^FR\s*\n)([\s\S]*?)(?=\nNL\b|$)/, (m, tag, block) => {
+        let b = block;
+        if (!hasSubjectFR(b)) b = `Objet: (à compléter)\n` + b;
+        b = ensurePlaceholdersBlock(b);
+        return `${tag}${b.trim()}\n`;
+      });
+      t = t.replace(/(^NL\s*\n)([\s\S]*)$/, (m, tag, block) => {
+        let b = block;
+        if (!hasSubjectNL(b)) b = `Onderwerp: (in te vullen)\n` + b;
+        b = ensurePlaceholdersBlock(b);
+        return `${tag}${b.trim()}`;
+      });
+    } else if (channel === "pb") {
+      // Geen onderwerpregels
+      t = t.replace(/(^FR[\s\S]*?)(?=\nNL\b)/, (seg) => seg.replace(/^Objet\s*:.*$/gmi, "").trim()+"\n");
+      t = t.replace(/(^NL[\s\S]*)$/, (seg) => seg.replace(/^(Onderwerp|Subject\s*\/\s*Onderwerp)\s*:.*$/gmi, "").trim());
+    } else if (channel === "phone") {
+      // Laat staan; validatie checkt bullets
+    }
   }
-
-  // Altijd afsluitende disclaimer indien ontbreekt
+  // Zorg voor disclaimer
   if (!/Dit bericht is indicatief; raadpleeg officiële bronnen en professionals\./.test(t) &&
       !/Ce message est indicatif; consultez les sources officielles et des professionnels\./.test(t)) {
     t += "\n\nDit bericht is indicatief; raadpleeg officiële bronnen en professionals.";
   }
-
   return t.trim();
 }
-function validateByRole(role, text) {
-  const t = text.trim();
+
+function validate(role, channel, text) {
+  const t = (text || "").trim();
   if (role === "notary-fr") {
-    return looksFrench(t) && hasPlaceholders(t) && /^Objet:/m.test(t);
+    if (channel === "email" || channel === "letter") {
+      return looksFrench(t) && hasSubjectFR(t) && /<PLAATS>/.test(t);
+    }
+    if (channel === "pb") {
+      return looksFrench(t) && !hasSubjectFR(t);
+    }
+    if (channel === "phone") {
+      const bulletLines = t.split(/\r?\n/).filter(l => /^[-*]\s/.test(l));
+      return bulletLines.length >= 3;
+    }
   }
   if (role === "agent-nl") {
-    return looksDutch(t) && hasPlaceholders(t) && /(Onderwerp|Subject\s*\/\s*Onderwerp)\s*:/mi.test(t);
+    if (channel === "email" || channel === "letter") {
+      return looksDutch(t) && hasSubjectNL(t) && /<PLAATS>/.test(t);
+    }
+    if (channel === "pb") {
+      return looksDutch(t) && !hasSubjectNL(t);
+    }
+    if (channel === "phone") {
+      const bulletLines = t.split(/\r?\n/).filter(l => /^[-*]\s/.test(l));
+      return bulletLines.length >= 3;
+    }
   }
-  // seller-mixed: moet FR en NL blok hebben
+  // seller-mixed
   const frBlock = /(^|\n)FR\s*\n([\s\S]*?)(?=\nNL\b|$)/.exec(t);
   const nlBlock = /(^|\n)NL\s*\n([\s\S]*)$/.exec(t);
   if (!frBlock || !nlBlock) return false;
-  const frOk = looksFrench(frBlock[2]) && /<PLAATS>/.test(frBlock[2]) && /^Objet:/m.test(frBlock[2]);
-  const nlOk = looksDutch(nlBlock[2]) && /<PLAATS>/.test(nlBlock[2]) && /(Onderwerp|Subject\s*\/\s*Onderwerp)\s*:/mi.test(nlBlock[2]);
-  return frOk && nlOk;
+  if (channel === "email" || channel === "letter") {
+    const frOk = looksFrench(frBlock[2]) && hasSubjectFR(frBlock[2]) && /<PLAATS>/.test(frBlock[2]);
+    const nlOk = looksDutch(nlBlock[2]) && hasSubjectNL(nlBlock[2]) && /<PLAATS>/.test(nlBlock[2]);
+    return frOk && nlOk;
+  }
+  if (channel === "pb") {
+    const frOk = looksFrench(frBlock[2]) && !hasSubjectFR(frBlock[2]);
+    const nlOk = looksDutch(nlBlock[2]) && !hasSubjectNL(nlBlock[2]);
+    return frOk && nlOk;
+  }
+  if (channel === "phone") {
+    const bulletsFR = frBlock[2].split(/\r?\n/).filter(l => /^[-*]\s/.test(l)).length;
+    const bulletsNL = nlBlock[2].split(/\r?\n/).filter(l => /^[-*]\s/.test(l)).length;
+    return bulletsFR >= 3 && bulletsNL >= 3;
+  }
+  return false;
 }
 
 // ——— Handler ———
@@ -375,14 +421,12 @@ export default async function handler(req, res) {
   try {
     if (req.method !== "POST") {
       res.setHeader("Allow", "POST");
-      return sendJson(res, 405, { ok: false, error: "Method Not Allowed. Use POST { role, dossier }." });
+      return sendJson(res, 405, { ok: false, error: "Method Not Allowed. Use POST { role, dossier, channel? }." });
     }
 
-    // Body lezen (compatibel)
+    // Body lezen
     let body = req.body;
-    if (typeof body === "string") {
-      try { body = JSON.parse(body); } catch {}
-    }
+    if (typeof body === "string") { try { body = JSON.parse(body); } catch {} }
     if (!body || typeof body !== "object") {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
@@ -392,51 +436,46 @@ export default async function handler(req, res) {
 
     const role = String(body.role || "").trim();
     const dossier = String(body.dossier || "").trim();
-
+    const channel = (String(body.channel || "email").trim().toLowerCase());
     if (!VALID_ROLES.includes(role)) {
-      return sendJson(res, 400, { ok: false, error: "Bad Request: 'role' vereist en moet één van [notary-fr, agent-nl, seller-mixed] zijn." });
+      return sendJson(res, 400, { ok: false, error: "Bad Request: 'role' moet één van [notary-fr, agent-nl, seller-mixed] zijn." });
+    }
+    if (!CHANNELS.includes(channel)) {
+      return sendJson(res, 400, { ok: false, error: "Bad Request: 'channel' moet één van [email, pb, phone, letter] zijn." });
     }
     if (!dossier) {
       return sendJson(res, 400, { ok: false, error: "Bad Request: veld 'dossier' is verplicht." });
     }
 
     const apiKey = getApiKey();
+    const prompt = buildPrompt(role, channel, dossier);
 
-    // — Step 1: primaire prompt
-    const prompt1 = buildPrompt(role, dossier);
-    const r1 = await callGeminiWithPolicy({ prompt: prompt1, apiKey, models: DEFAULT_MODELS });
-    let text = normalizeOutputByRole(role, r1.text);
+    const r1 = await callGeminiWithPolicy({ prompt, apiKey, models: DEFAULT_MODELS });
+    let text = normalizeByRoleAndChannel(role, channel, r1.text);
 
-    // — Step 2: validatie + 1 herprompt indien nodig
-    if (!validateByRole(role, text)) {
+    // één extra herprompt bij validatiefout
+    if (!validate(role, channel, text)) {
       const strictHint = [
-        "STRICT: Corrigeer output volgens de regels.",
-        role === "notary-fr" ? "La langue DOIT être le FRANÇAIS, avec 'Objet:' et les placeholders <PLAATS>, <DATUM>, <NAAM>, <ADRES>." : "",
-        role === "agent-nl" ? "De taal MOET NEDERLANDS zijn, met 'Onderwerp:' en placeholders <PLAATS>, <DATUM>, <NAAM>, <ADRES>." : "",
-        role === "seller-mixed" ? "Produisez DEUX BLOCS distincts: d'abord 'FR' (français complet), ensuite 'NL' (néerlandais complet). Chaque bloc doit respecter la structure et les placeholders." : ""
+        "STRICT: Corrigeer volgens rol en kanaal.",
+        role === "notary-fr" ? "Langue: FRANÇAIS. Email/lettre: exiger 'Objet:'; PB: PAS d'objet; Phone: liste à puces." : "",
+        role === "agent-nl" ? "Taal: NEDERLANDS. E-mail/brief: 'Onderwerp:' verplicht; PB: géén onderwerp; Telefoon: bullets." : "",
+        role === "seller-mixed" ? "Deux blocs requis: 'FR' puis 'NL'. Respectez les structures selon le canal." : ""
       ].filter(Boolean).join("\n");
-
-      const prompt2 = [buildPrompt(role, dossier), "", strictHint].join("\n");
+      const prompt2 = buildPrompt(role, channel, dossier) + "\n\n" + strictHint;
       const r2 = await callGeminiWithPolicy({ prompt: prompt2, apiKey, models: DEFAULT_MODELS });
-      text = normalizeOutputByRole(role, r2.text);
+      text = normalizeByRoleAndChannel(role, channel, r2.text);
     }
 
-    // — Laatste check; als nog fout, geef de best effort terug met een waarschuwing
-    const valid = validateByRole(role, text);
+    const valid = validate(role, channel, text);
 
     return sendJson(res, 200, {
       ok: true,
       role,
-      model: r1.modelUsed, // eerste succesvolle model
+      channel,
+      model: r1.modelUsed,
       throttleNotice: r1.throttleNotice || null,
-      output: {
-        letter_text: text,
-        valid
-      },
-      meta: {
-        received_chars: dossier.length,
-        timestamp: new Date().toISOString()
-      }
+      output: { letter_text: text, valid },
+      meta: { received_chars: dossier.length, timestamp: new Date().toISOString() }
     });
   } catch (err) {
     const status = err.status || 500;
