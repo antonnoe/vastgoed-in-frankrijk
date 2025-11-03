@@ -1,15 +1,16 @@
 // /public/script.js
-// Client-only UI logica voor Immodiagnostique.
-// - Geen externe calls vanuit de browser.
-// - Alle netwerkverkeer gaat via /api/analyse en /api/compose.
-// - NL UI, resultaatpanelen + smooth scroll, eenvoudige click-throttle.
+// Client-UI voor Immodiagnostique.
+// - Alleen POST naar /api/analyse en /api/compose (geen externe calls).
+// - Neemt nu ook "vraagprijs" en "contactkanaal" mee.
+// - Resultaatpanelen + smooth scroll + simpele click-throttle.
 
 (() => {
-  // --------- Elementen ---------
+  // ---------- Elementen ----------
   const $ = (sel) => document.querySelector(sel);
 
   const adLinkEl   = $('#adLink');
   const cityEl     = $('#city');
+  const priceEl    = $('#price');        // nieuw: verplicht
   const postcodeEl = $('#postcode');
   const streetEl   = $('#street');
   const numberEl   = $('#number');
@@ -30,18 +31,15 @@
   const btnNotary = $('#btn-notary');
   const btnAgent  = $('#btn-agent');
   const btnSeller = $('#btn-seller');
-  const composeLang = $('#compose-language');
 
-  // --------- Helpers ---------
+  // ---------- Helpers ----------
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const getChannel = () => (document.querySelector('input[name="channel"]:checked')?.value) || 'email';
+  const sanitize = (s) => String(s || '').trim();
 
   function smoothReveal(panel) {
     if (panel.hasAttribute('hidden')) panel.removeAttribute('hidden');
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  function sanitize(str) {
-    return String(str || '').trim();
   }
 
   function buildFullAddress({ number, street, postcode, city }) {
@@ -57,20 +55,26 @@
     return {
       adLink:   sanitize(adLinkEl?.value),
       city:     sanitize(cityEl?.value),
+      price:    sanitize(priceEl?.value),
       postcode: sanitize(postcodeEl?.value),
       street:   sanitize(streetEl?.value),
       number:   sanitize(numberEl?.value),
       adText:   sanitize(adTextEl?.value),
+      channel:  getChannel(),
     };
   }
 
   function composeDossierText(values) {
-    const { adLink, city, postcode, street, number, adText } = values;
+    const { adLink, city, price, postcode, street, number, adText } = values;
     const fullAddr = buildFullAddress({ number, street, postcode, city });
 
+    const route = (street || number || postcode) ? 'Route B (adres bekend)' : 'Route A (geen adres)';
     const lines = [];
+    lines.push(`[${route}]`);
+    lines.push("");
     lines.push("1) Officieel adres / advertentie");
     lines.push(`Invoer: ${fullAddr}`);
+    if (price) lines.push(`Vraagprijs: ${price}`);
     if (adLink) lines.push(`Advertentielink: ${adLink}`);
     lines.push("Exact perceelnummer later via notaris opvragen.");
     lines.push("");
@@ -92,7 +96,7 @@
   }
 
   function renderDossier(values) {
-    const { adLink, city } = values;
+    const { adLink, city, price } = values;
     const fullAddr = buildFullAddress(values);
 
     dossierOut.innerHTML = `
@@ -101,6 +105,7 @@
           <strong>1. Officieel adres / advertentie</strong>
           <div class="box">
             <div><em>Invoer:</em><br>${escapeHtml(fullAddr)}</div>
+            ${price ? `<div class="note">Vraagprijs: <strong>${escapeHtml(price)}</strong></div>` : ''}
             <div class="note">Exact perceel later opvragen bij notaris.</div>
             ${adLink ? `<div class="note">Advertentielink: <code>${escapeHtml(adLink)}</code></div>` : ''}
           </div>
@@ -181,13 +186,9 @@
   }
 
   function mdListToHtml(text = '') {
-    // Zeer simpele omzetting van "- item" lijsten naar <ul>
     const lines = text.split(/\r?\n/).map(l => l.trim());
     const items = lines.filter(l => /^[-*]\s+/.test(l)).map(l => l.replace(/^[-*]\s+/, ''));
-    if (!items.length) {
-      // Als geen bullets, geef paragrafen terug
-      return text ? `<p>${escapeHtml(text)}</p>` : '';
-    }
+    if (!items.length) return text ? `<p>${escapeHtml(text)}</p>` : '';
     return `<ul>${items.map(li => `<li>${escapeHtml(li)}</li>`).join('')}</ul>`;
   }
 
@@ -197,8 +198,8 @@
     }[ch]));
   }
 
-  // --------- Networking ---------
-  const busy = new Set(); // eenvoudige click-throttle per knop-id
+  // ---------- Networking ----------
+  const busy = new Set();
 
   async function postJson(url, payload) {
     const res = await fetch(url, {
@@ -212,7 +213,6 @@
     const data = isJson ? await res.json() : await res.text();
 
     if (!res.ok) {
-      // Toon throttle melding als 429
       if (res.status === 429) {
         throw new Error('429: Gesmoord door rate-limit. Server past backoff toe; probeer het zo meteen opnieuw.');
       }
@@ -232,40 +232,28 @@
       if (busy.has(id)) return;
       try {
         busy.add(id);
-        if (el) {
-          el.disabled = true;
-          el.classList.add('is-loading');
-        }
+        if (el) { el.disabled = true; el.classList.add('is-loading'); }
         return await fn(...args);
       } finally {
-        if (el) {
-          el.disabled = false;
-          el.classList.remove('is-loading');
-        }
+        if (el) { el.disabled = false; el.classList.remove('is-loading'); }
         busy.delete(id);
       }
     };
   }
 
-  // --------- Handlers ---------
+  // ---------- Handlers ----------
   btnGenerate?.addEventListener('click', withLock(btnGenerate, async () => {
     const values = collectInput();
-    if (!values.city) {
-      alert('Plaatsnaam is verplicht.');
-      cityEl?.focus();
-      return;
-    }
+    if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
+    if (!values.price) { alert('Vraagprijs is verplicht.'); priceEl?.focus(); return; }
     renderDossier(values);
   }));
 
   btnMakePrompt?.addEventListener('click', withLock(btnMakePrompt, async () => {
     const values = collectInput();
-    if (!values.city) {
-      alert('Plaatsnaam is verplicht.');
-      cityEl?.focus();
-      return;
-    }
-    // Bouw het tekstuele dossier en stuur naar /api/analyse
+    if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
+    if (!values.price) { alert('Vraagprijs is verplicht.'); priceEl?.focus(); return; }
+
     const dossierText = composeDossierText(values);
 
     try {
@@ -285,42 +273,34 @@
   }));
 
   function onCompose(role) {
-    return withLock(
-      role === 'notary-fr' ? btnNotary : role === 'agent-nl' ? btnAgent : btnSeller,
-      async () => {
-        const values = collectInput();
-        if (!values.city) {
-          alert('Plaatsnaam is verplicht.');
-          cityEl?.focus();
+    const btn = role === 'notary-fr' ? btnNotary : role === 'agent-nl' ? btnAgent : btnSeller;
+    return withLock(btn, async () => {
+      const values = collectInput();
+      if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
+      if (!values.price) { alert('Vraagprijs is verplicht.'); priceEl?.focus(); return; }
+
+      const dossierText = composeDossierText(values);
+      const channel = values.channel; // email | pb | phone | letter
+
+      try {
+        letterOut.innerHTML = `<div class="alert info">Bericht wordt gegenereerd…</div>`;
+        smoothReveal(letterPanel);
+
+        // Server accepteert { role, dossier }; channel meesturen schaadt niet (kan later server-side gebruikt worden)
+        const result = await postJson('/api/compose', { role, dossier: dossierText, channel });
+
+        if (!result?.ok) {
+          showError('letter', result?.message || 'Genereren van bericht is mislukt.', result && JSON.stringify(result));
           return;
         }
-        const dossierText = composeDossierText(values);
-
-        try {
-          letterOut.innerHTML = `<div class="alert info">Brief wordt gegenereerd…</div>`;
-          smoothReveal(letterPanel);
-
-          const result = await postJson('/api/compose', {
-            role,
-            dossier: dossierText
-          });
-
-          if (!result?.ok) {
-            showError('letter', result?.message || 'Genereren van brief is mislukt.', result && JSON.stringify(result));
-            return;
-          }
-          renderLetter(result);
-        } catch (err) {
-          showError('letter', err.message, err.detail);
-        }
+        renderLetter(result);
+      } catch (err) {
+        showError('letter', err.message, err.detail);
       }
-    );
+    });
   }
 
   btnNotary?.addEventListener('click', onCompose('notary-fr'));
   btnAgent?.addEventListener('click', onCompose('agent-nl'));
   btnSeller?.addEventListener('click', onCompose('seller-mixed'));
-
-  // Optioneel: wijziging van taal-dropdown kan later gebruikt worden;
-  // Voor nu is de rol gekoppeld aan de drie knoppen, zoals gespecificeerd.
 })();
