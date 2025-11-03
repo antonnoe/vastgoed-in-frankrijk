@@ -1,263 +1,326 @@
-// public/script.js
-document.addEventListener('DOMContentLoaded', () => {
-  const genereerButton = document.getElementById('genereerButton');
+// /public/script.js
+// Client-only UI logica voor Immodiagnostique.
+// - Geen externe calls vanuit de browser.
+// - Alle netwerkverkeer gaat via /api/analyse en /api/compose.
+// - NL UI, resultaatpanelen + smooth scroll, eenvoudige click-throttle.
 
-  const plaatsInput = document.getElementById('plaatsInput');
-  const postcodeInput = document.getElementById('postcodeInput');
-  const straatInput = document.getElementById('straatInput');
-  const huisnummerInput = document.getElementById('huisnummerInput');
-  const advertLinkInput = document.getElementById('advertLinkInput');
-  const advertText = document.getElementById('advertText');
+(() => {
+  // --------- Elementen ---------
+  const $ = (sel) => document.querySelector(sel);
 
-  const dashboardTegels = document.getElementById('dashboardTegels');
-  const actieKnoppenContainer = document.getElementById('actieKnoppenContainer');
+  const adLinkEl   = $('#adLink');
+  const cityEl     = $('#city');
+  const postcodeEl = $('#postcode');
+  const streetEl   = $('#street');
+  const numberEl   = $('#number');
+  const adTextEl   = $('#adText');
 
-  const notesAdres = document.getElementById('notes-adres');
-  const notesRisques = document.getElementById('notes-risques');
-  const notesDvf = document.getElementById('notes-dvf');
-  const notesPlu = document.getElementById('notes-plu');
+  const btnGenerate   = $('#btn-generate');
+  const btnMakePrompt = $('#btn-make-prompt');
 
-  const promptButton = document.getElementById('promptButton');
-  const promptModal = document.getElementById('promptModal');
-  const modalClose = document.getElementById('modalClose');
-  const promptOutput = document.getElementById('promptOutput');
-  const kopieerPromptButton = document.getElementById('kopieerPromptButton');
+  const dossierPanel = $('#dossier-panel');
+  const dossierOut   = $('#dossier-output');
 
-  const aiPanel = document.getElementById('aiPanel');
-  const aiResult = document.getElementById('aiResult');
+  const overviewPanel = $('#overview-panel');
+  const overviewOut   = $('#overview-output');
 
-  const letterLang = document.getElementById('letterLang');
-  const btnNotaris = document.getElementById('btnNotaris');
-  const btnMakelaar = document.getElementById('btnMakelaar');
-  const btnVerkoper = document.getElementById('btnVerkoper');
-  const letterOutput = document.getElementById('letterOutput');
+  const letterPanel = $('#letter-panel');
+  const letterOut   = $('#letter-output');
 
-  function capitalize(word) {
-    if (!word) return '';
-    return word.charAt(0).toUpperCase() + word.slice(1);
+  const btnNotary = $('#btn-notary');
+  const btnAgent  = $('#btn-agent');
+  const btnSeller = $('#btn-seller');
+  const composeLang = $('#compose-language');
+
+  // --------- Helpers ---------
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  function smoothReveal(panel) {
+    if (panel.hasAttribute('hidden')) panel.removeAttribute('hidden');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  function extractCityFromGreenAcres(url) {
-    try {
-      const u = new URL(url);
-      const parts = u.pathname.split('/').filter(Boolean);
-      if (parts.length >= 4) {
-        const maybeCity = parts[3];
-        return capitalize(maybeCity.replace(/-/g, ' '));
-      }
-      return '';
-    } catch (e) {
-      return '';
+  function sanitize(str) {
+    return String(str || '').trim();
+  }
+
+  function buildFullAddress({ number, street, postcode, city }) {
+    const parts = [];
+    if (sanitize(number)) parts.push(sanitize(number));
+    if (sanitize(street)) parts.push(sanitize(street));
+    if (sanitize(postcode)) parts.push(sanitize(postcode));
+    if (sanitize(city)) parts.push(sanitize(city));
+    return parts.join(' ') || '—';
+  }
+
+  function collectInput() {
+    return {
+      adLink:   sanitize(adLinkEl?.value),
+      city:     sanitize(cityEl?.value),
+      postcode: sanitize(postcodeEl?.value),
+      street:   sanitize(streetEl?.value),
+      number:   sanitize(numberEl?.value),
+      adText:   sanitize(adTextEl?.value),
+    };
+  }
+
+  function composeDossierText(values) {
+    const { adLink, city, postcode, street, number, adText } = values;
+    const fullAddr = buildFullAddress({ number, street, postcode, city });
+
+    const lines = [];
+    lines.push("1) Officieel adres / advertentie");
+    lines.push(`Invoer: ${fullAddr}`);
+    if (adLink) lines.push(`Advertentielink: ${adLink}`);
+    lines.push("Exact perceelnummer later via notaris opvragen.");
+    lines.push("");
+    lines.push("2) Risico's (Géorisques)");
+    lines.push(`Controleer risico's voor: ${city || '—'}.`);
+    lines.push("ERP nodig (≤ 6 maanden) indien adres bekend.");
+    lines.push("");
+    lines.push("3) Verkoopprijzen (DVF)");
+    lines.push(`DVF is op gemeenteniveau (gemeente: ${city || '—'}).`);
+    lines.push("");
+    lines.push("4) Bestemmingsplan (PLU)");
+    lines.push("Noteer zone en beperkingen via Géoportail Urbanisme (PLU/SUP).");
+    lines.push("");
+    if (adText) {
+      lines.push("Advertentietekst (volledig):");
+      lines.push(adText);
+    }
+    return lines.join("\n");
+  }
+
+  function renderDossier(values) {
+    const { adLink, city } = values;
+    const fullAddr = buildFullAddress(values);
+
+    dossierOut.innerHTML = `
+      <ol class="checklist">
+        <li>
+          <strong>1. Officieel adres / advertentie</strong>
+          <div class="box">
+            <div><em>Invoer:</em><br>${escapeHtml(fullAddr)}</div>
+            <div class="note">Exact perceel later opvragen bij notaris.</div>
+            ${adLink ? `<div class="note">Advertentielink: <code>${escapeHtml(adLink)}</code></div>` : ''}
+          </div>
+        </li>
+        <li>
+          <strong>2. Risico's (Géorisques)</strong>
+          <div class="box">
+            Controleer risico's voor: <code>${escapeHtml(city || '—')}</code><br>
+            <span class="note">ERP (≤ 6 maanden) vereist als adres bekend is.</span>
+          </div>
+        </li>
+        <li>
+          <strong>3. Verkoopprijzen (DVF)</strong>
+          <div class="box">
+            DVF is op gemeenteniveau (gemeente: <code>${escapeHtml(city || '—')}</code>).
+          </div>
+        </li>
+        <li>
+          <strong>4. Bestemmingsplan (PLU)</strong>
+          <div class="box">
+            Noteer zone & beperkingen via Géoportail Urbanisme (PLU/SUP).
+          </div>
+        </li>
+      </ol>
+    `;
+    smoothReveal(dossierPanel);
+  }
+
+  function renderOverviewFromApi(out, meta, model, throttleNotice) {
+    const flagHtml = mdListToHtml(out.red_flags);
+    const actHtml  = mdListToHtml(out.actions);
+    const qHtml    = mdListToHtml(out.questions);
+
+    overviewOut.innerHTML = `
+      ${throttleNotice ? `<div class="alert warn">Throttling door Gemini; backoff toegepast. (${escapeHtml(throttleNotice)})</div>` : ''}
+      <div class="kv tiny muted">Model: <code>${escapeHtml(model || '')}</code> · ${meta?.timestamp ? new Date(meta.timestamp).toLocaleString() : ''}</div>
+      <h3>1. Rode vlaggen</h3>
+      ${flagHtml || '<p class="muted">—</p>'}
+      <h3>2. Wat nu regelen</h3>
+      ${actHtml || '<p class="muted">—</p>'}
+      <h3>3. Vragen aan verkoper, notaris en makelaar</h3>
+      ${qHtml || '<p class="muted">—</p>'}
+    `;
+    smoothReveal(overviewPanel);
+  }
+
+  function renderLetter(result) {
+    const txt = result?.output?.letter_text || '';
+    const valid = result?.output?.valid;
+    const model = result?.model;
+    const throttleNotice = result?.throttleNotice;
+
+    letterOut.innerHTML = `
+      ${throttleNotice ? `<div class="alert warn">Throttling door Gemini; backoff toegepast. (${escapeHtml(throttleNotice)})</div>` : ''}
+      <pre class="letter">${escapeHtml(txt)}</pre>
+      <div class="kv tiny muted">Model: <code>${escapeHtml(model || '')}</code>${valid === false ? ' · <span class="warn">validatie: onzeker</span>' : ''}</div>
+    `;
+    smoothReveal(letterPanel);
+  }
+
+  function showError(panel, message, detail) {
+    const html = `
+      <div class="alert error">
+        <strong>Fout:</strong> ${escapeHtml(message || 'Onbekende fout')}
+        ${detail ? `<div class="tiny muted">${escapeHtml(detail)}</div>` : ''}
+      </div>
+    `;
+    if (panel === 'overview') {
+      overviewOut.innerHTML = html;
+      smoothReveal(overviewPanel);
+    } else if (panel === 'letter') {
+      letterOut.innerHTML = html;
+      smoothReveal(letterPanel);
+    } else {
+      dossierOut.innerHTML = html;
+      smoothReveal(dossierPanel);
     }
   }
 
-  // dossier maken
-  genereerButton.addEventListener('click', () => {
-    const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
-    let plaats = plaatsInput.value.trim();
-    const postcode = postcodeInput.value.trim();
-    const straat = straatInput.value.trim();
-    const huisnummer = huisnummerInput.value.trim();
+  function mdListToHtml(text = '') {
+    // Zeer simpele omzetting van "- item" lijsten naar <ul>
+    const lines = text.split(/\r?\n/).map(l => l.trim());
+    const items = lines.filter(l => /^[-*]\s+/.test(l)).map(l => l.replace(/^[-*]\s+/, ''));
+    if (!items.length) {
+      // Als geen bullets, geef paragrafen terug
+      return text ? `<p>${escapeHtml(text)}</p>` : '';
+    }
+    return `<ul>${items.map(li => `<li>${escapeHtml(li)}</li>`).join('')}</ul>`;
+  }
 
-    if (advertUrl) {
-      if (!plaats) {
-        const guessed = extractCityFromGreenAcres(advertUrl);
-        if (guessed) {
-          plaats = guessed;
-          plaatsInput.value = guessed;
-        }
+  function escapeHtml(str = '') {
+    return str.replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+  }
+
+  // --------- Networking ---------
+  const busy = new Set(); // eenvoudige click-throttle per knop-id
+
+  async function postJson(url, payload) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(payload),
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    const isJson = contentType.includes('application/json');
+    const data = isJson ? await res.json() : await res.text();
+
+    if (!res.ok) {
+      // Toon throttle melding als 429
+      if (res.status === 429) {
+        throw new Error('429: Gesmoord door rate-limit. Server past backoff toe; probeer het zo meteen opnieuw.');
       }
-      if (!plaats) {
-        alert('Vul even de plaatsnaam in.');
+      const msg = (isJson && data && (data.error || data.message)) || `HTTP ${res.status}`;
+      const detail = isJson ? JSON.stringify(data) : String(data);
+      const e = new Error(msg);
+      e.detail = detail;
+      e.status = res.status;
+      throw e;
+    }
+    return data;
+  }
+
+  function withLock(el, fn) {
+    return async (...args) => {
+      const id = el?.id || Math.random().toString(36).slice(2);
+      if (busy.has(id)) return;
+      try {
+        busy.add(id);
+        if (el) {
+          el.disabled = true;
+          el.classList.add('is-loading');
+        }
+        return await fn(...args);
+      } finally {
+        if (el) {
+          el.disabled = false;
+          el.classList.remove('is-loading');
+        }
+        busy.delete(id);
+      }
+    };
+  }
+
+  // --------- Handlers ---------
+  btnGenerate?.addEventListener('click', withLock(btnGenerate, async () => {
+    const values = collectInput();
+    if (!values.city) {
+      alert('Plaatsnaam is verplicht.');
+      cityEl?.focus();
+      return;
+    }
+    renderDossier(values);
+  }));
+
+  btnMakePrompt?.addEventListener('click', withLock(btnMakePrompt, async () => {
+    const values = collectInput();
+    if (!values.city) {
+      alert('Plaatsnaam is verplicht.');
+      cityEl?.focus();
+      return;
+    }
+    // Bouw het tekstuele dossier en stuur naar /api/analyse
+    const dossierText = composeDossierText(values);
+
+    try {
+      overviewOut.innerHTML = `<div class="alert info">Analyse wordt gegenereerd…</div>`;
+      smoothReveal(overviewPanel);
+
+      const result = await postJson('/api/analyse', { dossier: dossierText });
+
+      if (!result?.ok) {
+        showError('overview', result?.message || 'Analyse is mislukt.', result && JSON.stringify(result));
         return;
       }
-
-      dashboardTegels.style.display = 'grid';
-      actieKnoppenContainer.style.display = 'grid';
-
-      const adBlock = [
-        `Advertentie: ${advertUrl}`,
-        `Gevonden plaats: ${plaats}${postcode ? ' (' + postcode + ')' : ''}`,
-        `Vraag bij makelaar/notaris: exact adres, références cadastrales, ERP < 6 mnd.`
-      ].join('\n');
-
-      const pasted = (advertText?.value || '').trim();
-      const pastedLine = pasted ? `\n\nAdvertentietekst (samengevat):\n${pasted.slice(0, 1200)}` : '';
-
-      notesAdres.value = adBlock + pastedLine;
-
-      notesRisques.value =
-        `Controleer risico's voor: ${plaats}\nhttps://www.georisques.gouv.fr/\nAls traag: ERP via notaris.\n`;
-
-      notesDvf.value =
-        `Controleer DVF (gemeente):\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
-        `Als traag: https://www.data.gouv.fr → "dvf"\n`;
-
-      if (!notesPlu.value) {
-        notesPlu.value =
-          `PLU / SUP:\nhttps://www.geoportail-urbanisme.gouv.fr/map/\n` +
-          `Noteer zone + servitudes.\n`;
-      }
-      return;
+      renderOverviewFromApi(result.output, result.meta, result.model, result.throttleNotice);
+    } catch (err) {
+      showError('overview', err.message, err.detail);
     }
+  }));
 
-    // adresmodus
-    if (!plaats) {
-      alert('Plaatsnaam is verplicht');
-      return;
-    }
-
-    dashboardTegels.style.display = 'grid';
-    actieKnoppenContainer.style.display = 'grid';
-
-    const line = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
-    const pasted = (advertText?.value || '').trim();
-    const pastedLine = pasted ? `\n\nAdvertentietekst (samengevat):\n${pasted.slice(0, 1200)}` : '';
-
-    notesAdres.value =
-      `Invoer:\n${line}\n(exact perceel later opvragen bij notaris)\n` + pastedLine;
-
-    notesRisques.value =
-      `Controleer risico's voor: ${plaats}\nhttps://www.georisques.gouv.fr/\nAls traag/offline: ERP bij notaris.\n`;
-
-    notesDvf.value =
-      `Controleer DVF voor: ${plaats}\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
-      `Als traag/offline: https://www.data.gouv.fr → "dvf"\n`;
-
-    if (!notesPlu.value) {
-      notesPlu.value =
-        `PLU / SUP via:\nhttps://www.geoportail-urbanisme.gouv.fr/map/\nNoteer zone + beperkingen.\n`;
-    }
-  });
-
-  // prompt + send-to-ai
-  if (promptButton) {
-    promptButton.addEventListener('click', () => {
-      const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
-      const adresRegel = [
-        huisnummerInput.value, straatInput.value, postcodeInput.value, plaatsInput.value
-      ].filter(Boolean).join(' ');
-
-      const dossier = `
-[ADRES / ADVERTENTIE]
-${advertUrl ? advertUrl : (adresRegel || 'Geen volledig adres')}
-
-[RISICO'S (GÉORISQUES)]
-${notesRisques.value || 'Geen notities'}
-
-[VERKOOPPRIJZEN (DVF)]
-${notesDvf.value || 'Geen notities'}
-
-[KADASTER / ADRES]
-${notesAdres.value || 'Geen kadastrale info.'}
-
-[PLU]
-${notesPlu.value || 'Nog niet gecontroleerd.'}
-      `.trim();
-
-      const finalPrompt = `
-Je mag ALLEEN werken met de info hieronder. NIET zelf extra Franse bronnen, telefoonnummers, gemeenten, prijzen, PPR’s of openingstijden verzinnen.
-
-Geef je antwoord ALLEEN in deze 3 blokken:
-
-1. Rode vlaggen (max. 5 bullets)
-2. Wat nu regelen (verzekering / ERP / PLU / servitudes)
-3. Vragen aan verkoper, notaris en makelaar (3×3 bullets)
-
-Als het exacte adres ontbreekt: zeg dat en verwijs naar ERP < 6 maanden + références cadastrales.
-
---- DOSSIER ---
-${dossier}
-      `.trim();
-
-      promptOutput.value = finalPrompt;
-      promptModal.style.display = 'block';
-
-      let sendBtn = document.getElementById('sendToAiButton');
-      if (!sendBtn) {
-        sendBtn = document.createElement('button');
-        sendBtn.id = 'sendToAiButton';
-        sendBtn.textContent = '👍 Verstuur naar AI';
-        sendBtn.className = 'primary-cta';
-        sendBtn.style.marginTop = '.6rem';
-        promptOutput.parentNode.appendChild(sendBtn);
-      }
-
-      sendBtn.onclick = async () => {
-        sendBtn.textContent = 'Bezig...';
-        aiResult.textContent = 'AI wordt aangeroepen...';
+  function onCompose(role) {
+    return withLock(
+      role === 'notary-fr' ? btnNotary : role === 'agent-nl' ? btnAgent : btnSeller,
+      async () => {
+        const values = collectInput();
+        if (!values.city) {
+          alert('Plaatsnaam is verplicht.');
+          cityEl?.focus();
+          return;
+        }
+        const dossierText = composeDossierText(values);
 
         try {
-          const resp = await fetch('/api/analyse', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dossier: finalPrompt })
+          letterOut.innerHTML = `<div class="alert info">Brief wordt gegenereerd…</div>`;
+          smoothReveal(letterPanel);
+
+          const result = await postJson('/api/compose', {
+            role,
+            dossier: dossierText
           });
 
-          const data = await resp.json();
-
-          if (!resp.ok) {
-            aiPanel.style.display = 'block';
-            aiResult.textContent = 'API FOUT:\n' + JSON.stringify(data, null, 2);
-          } else {
-            const out = data.analysis || JSON.stringify(data, null, 2);
-            aiPanel.style.display = 'block';
-            aiResult.textContent = out;
-
-            // scroll naar AI panel
-            document.getElementById('aiPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          if (!result?.ok) {
+            showError('letter', result?.message || 'Genereren van brief is mislukt.', result && JSON.stringify(result));
+            return;
           }
+          renderLetter(result);
         } catch (err) {
-          aiPanel.style.display = 'block';
-          aiResult.textContent = 'JS FOUT: ' + err.message;
-        } finally {
-          sendBtn.textContent = '👍 Verstuur naar AI';
-          promptModal.style.display = 'none';
+          showError('letter', err.message, err.detail);
         }
-      };
-    });
-  }
-
-  // compose letters
-  async function composeLetter(kind, lang) {
-    const context = aiResult.textContent?.trim() || '';
-    if (!context) {
-      letterOutput.value = 'Geen AI-overzicht beschikbaar. Maak eerst het AI-overzicht.';
-      return;
-    }
-    letterOutput.value = 'Bezig met opstellen...';
-
-    try {
-      const resp = await fetch('/api/compose', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind, lang, context })
-      });
-      const data = await resp.json();
-
-      if (!resp.ok) {
-        letterOutput.value = 'API FOUT:\n' + JSON.stringify(data, null, 2);
-      } else {
-        letterOutput.value = data.letter || JSON.stringify(data, null, 2);
       }
-    } catch (e) {
-      letterOutput.value = 'JS FOUT: ' + e.message;
-    }
+    );
   }
 
-  btnNotaris?.addEventListener('click', () => composeLetter('notaris', 'FR'));
-  btnMakelaar?.addEventListener('click', () => composeLetter('makelaar', 'FR'));
-  btnVerkoper?.addEventListener('click', () => composeLetter('verkoper', (letterLang?.value || 'NL')));
+  btnNotary?.addEventListener('click', onCompose('notary-fr'));
+  btnAgent?.addEventListener('click', onCompose('agent-nl'));
+  btnSeller?.addEventListener('click', onCompose('seller-mixed'));
 
-  // modal sluiten
-  modalClose?.addEventListener('click', () => { promptModal.style.display = 'none'; });
-  window.addEventListener('click', (e) => { if (e.target === promptModal) promptModal.style.display = 'none'; });
-
-  // kopieer prompt
-  kopieerPromptButton?.addEventListener('click', () => {
-    promptOutput.select();
-    document.execCommand('copy');
-    kopieerPromptButton.textContent = 'Gekopieerd!';
-    setTimeout(() => (kopieerPromptButton.textContent = 'Kopieer naar klembord'), 1500);
-  });
-});
+  // Optioneel: wijziging van taal-dropdown kan later gebruikt worden;
+  // Voor nu is de rol gekoppeld aan de drie knoppen, zoals gespecificeerd.
+})();
