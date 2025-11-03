@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const straatInput = document.getElementById('straatInput');
   const huisnummerInput = document.getElementById('huisnummerInput');
   const advertLinkInput = document.getElementById('advertLinkInput');
-  const advertTextInput = document.getElementById('advertTextInput');
+  const advertText = document.getElementById('advertText');
 
   const dashboardTegels = document.getElementById('dashboardTegels');
   const actieKnoppenContainer = document.getElementById('actieKnoppenContainer');
@@ -23,12 +23,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const promptOutput = document.getElementById('promptOutput');
   const kopieerPromptButton = document.getElementById('kopieerPromptButton');
 
+  const aiPanel = document.getElementById('aiPanel');
   const aiResult = document.getElementById('aiResult');
-  const needBtn = document.getElementById('showNeed');
-  const niceBtn = document.getElementById('showNice');
 
-  let lastAIText = '';
-  let lastSources = [];
+  const letterLang = document.getElementById('letterLang');
+  const btnNotaris = document.getElementById('btnNotaris');
+  const btnMakelaar = document.getElementById('btnMakelaar');
+  const btnVerkoper = document.getElementById('btnVerkoper');
+  const letterOutput = document.getElementById('letterOutput');
 
   function capitalize(word) {
     if (!word) return '';
@@ -49,6 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // dossier maken
   genereerButton.addEventListener('click', () => {
     const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
     let plaats = plaatsInput.value.trim();
@@ -70,49 +73,56 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       dashboardTegels.style.display = 'grid';
-      actieKnoppenContainer.style.display = 'flex';
+      actieKnoppenContainer.style.display = 'grid';
 
-      notesAdres.value =
-        `Advertentie: ${advertUrl}\nGevonden plaats: ${plaats}${
-          postcode ? ' (' + postcode + ')' : ''
-        }\n` + `Vraag bij makelaar/notaris: exact adres, références cadastrales, ERP < 6 mnd.\n`;
+      const adBlock = [
+        `Advertentie: ${advertUrl}`,
+        `Gevonden plaats: ${plaats}${postcode ? ' (' + postcode + ')' : ''}`,
+        `Vraag bij makelaar/notaris: exact adres, références cadastrales, ERP < 6 mnd.`
+      ].join('\n');
+
+      const pasted = (advertText?.value || '').trim();
+      const pastedLine = pasted ? `\n\nAdvertentietekst (samengevat):\n${pasted.slice(0, 1200)}` : '';
+
+      notesAdres.value = adBlock + pastedLine;
 
       notesRisques.value =
         `Controleer risico's voor: ${plaats}\nhttps://www.georisques.gouv.fr/\nAls traag: ERP via notaris.\n`;
 
       notesDvf.value =
-        `Controleer DVF (gemeente):\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(
-          plaats
-        )}\n` + `Als traag: https://www.data.gouv.fr → "dvf"\n`;
+        `Controleer DVF (gemeente):\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
+        `Als traag: https://www.data.gouv.fr → "dvf"\n`;
 
       if (!notesPlu.value) {
         notesPlu.value =
           `PLU / SUP:\nhttps://www.geoportail-urbanisme.gouv.fr/map/\n` +
           `Noteer zone + servitudes.\n`;
       }
-
       return;
     }
 
+    // adresmodus
     if (!plaats) {
       alert('Plaatsnaam is verplicht');
       return;
     }
 
     dashboardTegels.style.display = 'grid';
-    actieKnoppenContainer.style.display = 'flex';
+    actieKnoppenContainer.style.display = 'grid';
+
+    const line = [huisnummer, straat, postcode, plaats].filter(Boolean).join(' ');
+    const pasted = (advertText?.value || '').trim();
+    const pastedLine = pasted ? `\n\nAdvertentietekst (samengevat):\n${pasted.slice(0, 1200)}` : '';
 
     notesAdres.value =
-      `Invoer:\n${[huisnummer, straat, postcode, plaats].filter(Boolean).join(' ')}\n` +
-      `(exact perceel later opvragen bij notaris)\n`;
+      `Invoer:\n${line}\n(exact perceel later opvragen bij notaris)\n` + pastedLine;
 
     notesRisques.value =
       `Controleer risico's voor: ${plaats}\nhttps://www.georisques.gouv.fr/\nAls traag/offline: ERP bij notaris.\n`;
 
     notesDvf.value =
-      `Controleer DVF voor: ${plaats}\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(
-        plaats
-      )}\n` + `Als traag/offline: https://www.data.gouv.fr → "dvf"\n`;
+      `Controleer DVF voor: ${plaats}\nhttps://app.dvf.etalab.gouv.fr/?q=${encodeURIComponent(plaats)}\n` +
+      `Als traag/offline: https://www.data.gouv.fr → "dvf"\n`;
 
     if (!notesPlu.value) {
       notesPlu.value =
@@ -120,22 +130,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // prompt + send-to-ai
   if (promptButton) {
     promptButton.addEventListener('click', () => {
       const advertUrl = advertLinkInput ? advertLinkInput.value.trim() : '';
-      const advertText = advertTextInput ? advertTextInput.value.trim() : '';
       const adresRegel = [
-        huisnummerInput.value,
-        straatInput.value,
-        postcodeInput.value,
-        plaatsInput.value
-      ]
-        .filter(Boolean)
-        .join(' ');
+        huisnummerInput.value, straatInput.value, postcodeInput.value, plaatsInput.value
+      ].filter(Boolean).join(' ');
 
       const dossier = `
 [ADRES / ADVERTENTIE]
-${advertUrl ? advertUrl : adresRegel || 'Geen volledig adres'}
+${advertUrl ? advertUrl : (adresRegel || 'Geen volledig adres')}
 
 [RISICO'S (GÉORISQUES)]
 ${notesRisques.value || 'Geen notities'}
@@ -148,13 +153,24 @@ ${notesAdres.value || 'Geen kadastrale info.'}
 
 [PLU]
 ${notesPlu.value || 'Nog niet gecontroleerd.'}
-
-[ADVERTENTIE-TEKST (optioneel)]
-${advertText || 'Geen advertentietekst geplakt.'}
       `.trim();
 
-      // we laten de modal zien met de ruwe prompt
-      promptOutput.value = dossier;
+      const finalPrompt = `
+Je mag ALLEEN werken met de info hieronder. NIET zelf extra Franse bronnen, telefoonnummers, gemeenten, prijzen, PPR’s of openingstijden verzinnen.
+
+Geef je antwoord ALLEEN in deze 3 blokken:
+
+1. Rode vlaggen (max. 5 bullets)
+2. Wat nu regelen (verzekering / ERP / PLU / servitudes)
+3. Vragen aan verkoper, notaris en makelaar (3×3 bullets)
+
+Als het exacte adres ontbreekt: zeg dat en verwijs naar ERP < 6 maanden + références cadastrales.
+
+--- DOSSIER ---
+${dossier}
+      `.trim();
+
+      promptOutput.value = finalPrompt;
       promptModal.style.display = 'block';
 
       let sendBtn = document.getElementById('sendToAiButton');
@@ -162,7 +178,8 @@ ${advertText || 'Geen advertentietekst geplakt.'}
         sendBtn = document.createElement('button');
         sendBtn.id = 'sendToAiButton';
         sendBtn.textContent = '👍 Verstuur naar AI';
-        sendBtn.style.marginTop = '0.5rem';
+        sendBtn.className = 'primary-cta';
+        sendBtn.style.marginTop = '.6rem';
         promptOutput.parentNode.appendChild(sendBtn);
       }
 
@@ -174,70 +191,73 @@ ${advertText || 'Geen advertentietekst geplakt.'}
           const resp = await fetch('/api/analyse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dossier })
+            body: JSON.stringify({ dossier: finalPrompt })
           });
+
           const data = await resp.json();
 
           if (!resp.ok) {
+            aiPanel.style.display = 'block';
             aiResult.textContent = 'API FOUT:\n' + JSON.stringify(data, null, 2);
-            return;
+          } else {
+            const out = data.analysis || JSON.stringify(data, null, 2);
+            aiPanel.style.display = 'block';
+            aiResult.textContent = out;
+
+            // scroll naar AI panel
+            document.getElementById('aiPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }
-
-          lastAIText = data.analysis || '';
-          lastSources = Array.isArray(data.sources) ? data.sources : [];
-
-          // standaard: toon alles
-          aiResult.textContent = lastAIText;
         } catch (err) {
-          console.error(err);
+          aiPanel.style.display = 'block';
           aiResult.textContent = 'JS FOUT: ' + err.message;
         } finally {
           sendBtn.textContent = '👍 Verstuur naar AI';
+          promptModal.style.display = 'none';
         }
       };
     });
   }
 
-  // modal sluiten
-  if (modalClose) {
-    modalClose.addEventListener('click', () => {
-      promptModal.style.display = 'none';
-    });
-  }
-  window.addEventListener('click', (e) => {
-    if (e.target === promptModal) {
-      promptModal.style.display = 'none';
+  // compose letters
+  async function composeLetter(kind, lang) {
+    const context = aiResult.textContent?.trim() || '';
+    if (!context) {
+      letterOutput.value = 'Geen AI-overzicht beschikbaar. Maak eerst het AI-overzicht.';
+      return;
     }
+    letterOutput.value = 'Bezig met opstellen...';
+
+    try {
+      const resp = await fetch('/api/compose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, lang, context })
+      });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        letterOutput.value = 'API FOUT:\n' + JSON.stringify(data, null, 2);
+      } else {
+        letterOutput.value = data.letter || JSON.stringify(data, null, 2);
+      }
+    } catch (e) {
+      letterOutput.value = 'JS FOUT: ' + e.message;
+    }
+  }
+
+  btnNotaris?.addEventListener('click', () => composeLetter('notaris', 'FR'));
+  btnMakelaar?.addEventListener('click', () => composeLetter('makelaar', 'FR'));
+  btnVerkoper?.addEventListener('click', () => composeLetter('verkoper', (letterLang?.value || 'NL')));
+
+  // modal sluiten
+  modalClose?.addEventListener('click', () => { promptModal.style.display = 'none'; });
+  window.addEventListener('click', (e) => { if (e.target === promptModal) promptModal.style.display = 'none'; });
+
+  // kopieer prompt
+  kopieerPromptButton?.addEventListener('click', () => {
+    promptOutput.select();
+    document.execCommand('copy');
+    kopieerPromptButton.textContent = 'Gekopieerd!';
+    setTimeout(() => (kopieerPromptButton.textContent = 'Kopieer naar klembord'), 1500);
   });
-
-  if (kopieerPromptButton) {
-    kopieerPromptButton.addEventListener('click', () => {
-      promptOutput.select();
-      document.execCommand('copy');
-      kopieerPromptButton.textContent = 'Gekopieerd!';
-      setTimeout(() => (kopieerPromptButton.textContent = 'Kopieer naar klembord'), 1500);
-    });
-  }
-
-  // need / nice knoppen
-  if (needBtn) {
-    needBtn.addEventListener('click', () => {
-      if (!lastAIText) return;
-      // pak alleen het deel tot OMGEVINGSDOSSIER
-      const splitIdx = lastAIText.indexOf('[OMGEVINGSDOSSIER');
-      const needPart =
-        splitIdx > -1 ? lastAIText.slice(0, splitIdx).trim() : lastAIText.trim();
-      aiResult.textContent = needPart;
-    });
-  }
-
-  if (niceBtn) {
-    niceBtn.addEventListener('click', () => {
-      if (!lastAIText) return;
-      const splitIdx = lastAIText.indexOf('[OMGEVINGSDOSSIER');
-      const nicePart =
-        splitIdx > -1 ? lastAIText.slice(splitIdx).trim() : '(geen omgevingsdeel)';
-      aiResult.textContent = nicePart + '\n\nBronnen:\n' + lastSources.join('\n');
-    });
-  }
 });
