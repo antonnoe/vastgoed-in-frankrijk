@@ -1,119 +1,157 @@
+<!-- public/index.html -->
 <!DOCTYPE html>
 <html lang="nl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Immodiagnostique — Indicatieve vastgoedanalyse</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>IMMODIAGNOSTIQUE – Indicatieve vastgoedanalyse</title>
+  <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand-texts">
-      <h1>IMMODIAGNOSTIQUE</h1>
-      <h2>Indicatieve vastgoedanalyse</h2>
-      <p class="byline">Een concept van Infofrankrijk.com</p>
+  <!-- Topbar / Branding -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo-icon">▢</div>
+      <div class="brand-text">
+        <div class="logo-text">IMMODIAGNOSTIQUE</div>
+        <div class="subtext">Een concept van Infofrankrijk.com</div>
+      </div>
     </div>
-  </header>
+  </div>
 
-  <main class="page-shell">
-    <section class="tool-card">
-      <div class="tool-header">
-        <h3>Hybride Dossier Generator</h3>
-        <p>Vul één adres in, óf plak een advertentielink. Je kunt ook de advertentietekst plakken.</p>
+  <main class="container">
+    <section class="app-card">
+      <div class="header-row">
+        <div class="intro">Indicatieve vastgoedanalyse</div>
       </div>
 
-      <form class="form-grid" onsubmit="return false;">
-        <div class="input-veld full-width">
-          <label for="advertLinkInput">Advertentielink (optioneel)</label>
-          <input
-            type="text"
-            id="advertLinkInput"
-            placeholder="https://www.green-acres.fr/en/properties/property/..."
-          />
+      <div class="tab-container">
+        <div class="tab-buttons">
+          <button class="tab-button active">Hybride Dossier Generator</button>
         </div>
 
-        <div class="input-row-3">
-          <div class="input-veld">
-            <label for="plaatsInput">Plaatsnaam (verplicht)</label>
-            <input type="text" id="plaatsInput" placeholder="Bijv: Biarritz" />
+        <div id="DossierDashboard" class="tab-content active">
+          <h2>Stap 1: Genereer het dossier</h2>
+          <p>Vul één adres in, óf plak een advertentielink. Je kunt ook de advertentietekst plakken.</p>
+
+          <div class="form-grid narrow">
+            <div class="input-veld">
+              <label for="advertLinkInput">Advertentielink (optioneel)</label>
+              <input type="text" id="advertLinkInput" placeholder="https://www.green-acres.fr/..."/>
+            </div>
+
+            <div class="input-veld">
+              <label for="plaatsInput">Plaatsnaam (verplicht)</label>
+              <input type="text" id="plaatsInput" placeholder="Bijv: Nantes"/>
+            </div>
+
+            <div class="input-veld">
+              <label for="postcodeInput">Postcode</label>
+              <input type="text" id="postcodeInput" placeholder="Bijv: 44000"/>
+            </div>
+
+            <div class="input-veld">
+              <label for="straatInput">Straatnaam</label>
+              <input type="text" id="straatInput" placeholder="Bijv: Rue Pasteur"/>
+            </div>
+
+            <div class="input-veld">
+              <label for="huisnummerInput">Huisnummer</label>
+              <input type="text" id="huisnummerInput" placeholder="Bijv: 22"/>
+            </div>
           </div>
-          <div class="input-veld">
-            <label for="postcodeInput">Postcode</label>
-            <input type="text" id="postcodeInput" placeholder="Bijv: 64200" />
+
+          <div class="input-veld centered">
+            <label for="advertText">Advertentietekst (optioneel)</label>
+            <textarea id="advertText" class="ad-textarea" placeholder="Plak hier de volledige advertentietekst (Ctrl+A → Ctrl+C → Ctrl+V)"></textarea>
           </div>
-          <div class="input-veld">
-            <label for="straatInput">Straatnaam</label>
-            <input type="text" id="straatInput" placeholder="Bijv: Rue Pasteur" />
+
+          <div class="button-container center">
+            <button id="genereerButton" class="primary-cta">Genereer dossier</button>
           </div>
-          <div class="input-veld">
-            <label for="huisnummerInput">Huisnummer</label>
-            <input type="text" id="huisnummerInput" placeholder="Bijv: 999" />
+
+          <div id="dashboardTegels" class="tegels-container" style="display:none">
+            <div class="tegel">
+              <div class="tegel-header"><h3>1. Officieel adres / advertentie</h3></div>
+              <div class="tegel-body">
+                <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
+              </div>
+            </div>
+
+            <div class="tegel">
+              <div class="tegel-header"><h3>2. Risico's (Géorisques)</h3></div>
+              <div class="tegel-body">
+                <textarea id="notes-risques" class="tegel-textarea" readonly></textarea>
+              </div>
+            </div>
+
+            <div class="tegel">
+              <div class="tegel-header"><h3>3. Verkoopprijzen (DVF)</h3></div>
+              <div class="tegel-body">
+                <textarea id="notes-dvf" class="tegel-textarea" readonly></textarea>
+              </div>
+            </div>
+
+            <div class="tegel handmatig">
+              <div class="tegel-header"><h3>4. Bestemmingsplan (PLU)</h3></div>
+              <div class="tegel-body">
+                <p>Controleer zelf in Géoportail en plak hier de regels.</p>
+                <a href="https://www.geoportail-urbanisme.gouv.fr/map/" class="tegel-knop" target="_blank">Open PLU-kaart</a>
+                <textarea id="notes-plu" class="tegel-textarea" placeholder="Zone U / AU / A / N, SUP, erfdienstbaarheden..."></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div id="actieKnoppenContainer" class="actie-knoppen center" style="display:none">
+            <button id="promptButton" class="actie-knop prompt">Maak AI-prompt</button>
           </div>
         </div>
-
-        <div class="input-veld advertentie-tekst">
-          <label for="advertTextInput">Advertentietekst (optioneel)</label>
-          <textarea id="advertTextInput" placeholder="Plak hier de volledige advertentie (Ctrl+A → Ctrl+C → Ctrl+V)…"></textarea>
-        </div>
-
-        <div class="center-buttons">
-          <button id="genereerButton" type="button" class="btn-primary">Genereer dossier</button>
-        </div>
-      </form>
-
-      <div id="dashboardTegels" class="tegels-container" style="display: none">
-        <article class="tegel">
-          <header><h4>1. Officieel adres / advertentie</h4></header>
-          <textarea id="notes-adres" class="tegel-textarea" readonly></textarea>
-        </article>
-
-        <article class="tegel">
-          <header><h4>2. Risico's (Géorisques)</h4></header>
-          <textarea id="notes-risques" class="tegel-textarea" readonly></textarea>
-        </article>
-
-        <article class="tegel">
-          <header><h4>3. Verkoopprijzen (DVF)</h4></header>
-          <textarea id="notes-dvf" class="tegel-textarea" readonly></textarea>
-        </article>
-
-        <article class="tegel">
-          <header><h4>4. Bestemmingsplan (PLU)</h4></header>
-          <p class="tegel-help">Controleer zelf in Géoportail en plak hier de regels.</p>
-          <a
-            href="https://www.geoportail-urbanisme.gouv.fr/map/"
-            class="tegel-link"
-            target="_blank"
-            rel="noreferrer"
-            >Open PLU-kaart</a
-          >
-          <textarea
-            id="notes-plu"
-            class="tegel-textarea"
-            placeholder="Zone U / AU / A / N, SUP, erfdienstbaarheden…"
-          ></textarea>
-        </article>
-      </div>
-
-      <div id="actieKnoppenContainer" class="center-buttons" style="display: none">
-        <button id="promptButton" type="button" class="btn-secondary">Maak AI-prompt</button>
       </div>
     </section>
 
-    <!-- Modal -->
+    <!-- Modal: prompt + versturen -->
     <div id="promptModal" class="modal">
       <div class="modal-content">
         <span class="modal-close" id="modalClose">&times;</span>
-        <h3>AI-prompt & resultaat</h3>
+        <h2>Prompt & AI-resultaat</h2>
         <textarea id="promptOutput" readonly></textarea>
-        <div class="modal-buttons">
-          <button id="kopieerPromptButton" type="button" class="btn-ghost">Kopieer naar klembord</button>
-        </div>
+        <button id="kopieerPromptButton">Kopieer naar klembord</button>
+        <!-- De “Verstuur naar AI” knop wordt dynamisch toegevoegd -->
       </div>
     </div>
 
-    <!-- Resultaat (onderaan) -->
-    <section id="aiResult" class="ai-result"></section>
+    <!-- AI-resultaat paneel (aparte sectie) -->
+    <section id="aiPanel" class="app-card" style="display:none">
+      <h3>AI-overzicht</h3>
+      <div id="aiResult" class="ai-output"></div>
+
+      <div class="compose-controls">
+        <div class="compose-row">
+          <div class="compose-left">
+            <label for="letterLang">Taal voor brief aan verkoper:</label>
+            <select id="letterLang">
+              <option value="NL">Nederlands</option>
+              <option value="EN">English</option>
+              <option value="FR">Français</option>
+            </select>
+          </div>
+          <div class="compose-right">
+            <button id="btnNotaris" class="ghost-cta">Maak notarisbrief (FR)</button>
+            <button id="btnMakelaar" class="ghost-cta">Maak makelaarsbrief (FR)</button>
+            <button id="btnVerkoper" class="ghost-cta">Maak brief aan verkoper</button>
+          </div>
+        </div>
+        <div class="compose-output">
+          <label>Brief (voorbeeld):</label>
+          <textarea id="letterOutput" class="letter-textarea" readonly></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- Disclaimer -->
+    <section class="disclaimer">
+      <strong>Disclaimer:</strong> Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.
+    </section>
   </main>
 
   <script src="script.js"></script>
