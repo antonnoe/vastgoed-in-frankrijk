@@ -1,8 +1,9 @@
 // /public/script.js
 // Client-UI voor Immodiagnostique.
 // - Alleen POST naar /api/analyse en /api/compose (geen externe calls).
-// - Neemt nu ook "vraagprijs" en "contactkanaal" mee.
+// - Neemt ook "vraagprijs" en "contactkanaal" mee.
 // - Resultaatpanelen + smooth scroll + simpele click-throttle.
+// - Dynamische knopteksten o.b.v. gekozen kanaal (email/pb/phone/letter).
 
 (() => {
   // ---------- Elementen ----------
@@ -10,7 +11,7 @@
 
   const adLinkEl   = $('#adLink');
   const cityEl     = $('#city');
-  const priceEl    = $('#price');        // nieuw: verplicht
+  const priceEl    = $('#price');        // verplicht
   const postcodeEl = $('#postcode');
   const streetEl   = $('#street');
   const numberEl   = $('#number');
@@ -198,6 +199,45 @@
     }[ch]));
   }
 
+  // ---------- Dynamische CTA-teksten ----------
+  function updateCTALabels() {
+    const channel = getChannel(); // email | pb | phone | letter
+    // Bepaal het woord: bericht/brief/belscript
+    const word =
+      channel === 'letter' ? 'brief' :
+      channel === 'phone'  ? 'belscript' :
+      'bericht';
+
+    // Notaris (FR)
+    if (btnNotary) {
+      btnNotary.textContent =
+        word === 'belscript'
+          ? 'Maak belscript voor notaris (FR)'
+          : `Maak ${word} voor notaris (FR)`;
+    }
+    // Makelaar (NL)
+    if (btnAgent) {
+      btnAgent.textContent =
+        word === 'belscript'
+          ? 'Maak belscript voor makelaar (NL)'
+          : `Maak ${word} voor makelaar (NL)`;
+    }
+    // Verkoper (FR/NL)
+    if (btnSeller) {
+      btnSeller.textContent =
+        word === 'belscript'
+          ? 'Maak belscript voor verkoper (FR/NL)'
+          : `Maak ${word} aan verkoper (FR/NL)`;
+    }
+  }
+
+  // Koppel change-events aan radiobuttons
+  document.querySelectorAll('input[name="channel"]').forEach(r =>
+    r.addEventListener('change', updateCTALabels)
+  );
+  // Init bij load
+  updateCTALabels();
+
   // ---------- Networking ----------
   const busy = new Set();
 
@@ -286,7 +326,6 @@
         letterOut.innerHTML = `<div class="alert info">Bericht wordt gegenereerd…</div>`;
         smoothReveal(letterPanel);
 
-        // Server accepteert { role, dossier }; channel meesturen schaadt niet (kan later server-side gebruikt worden)
         const result = await postJson('/api/compose', { role, dossier: dossierText, channel });
 
         if (!result?.ok) {
