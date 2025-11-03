@@ -1,4 +1,4 @@
-// /api/analyse.js
+// /api/analyse.js (ESM)
 // Vercel Serverless Function — POST { dossier }
 // Doel: AI-overzicht op basis van ingevoerd dossier (rode vlaggen / acties / vragen)
 // Vereisten: Env var GEMINI_API_KEY (Vercel → Settings → Environment Variables)
@@ -10,7 +10,7 @@ const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models
 // Regels: 1 req/sec, max 8 req/min.
 // Let op: serverless is stateless over meerdere instances; dit beschermt vooral tegen bursts per instance.
 const calls = [];
-function nowMs() { return Date.now(); }
+const nowMs = () => Date.now();
 function pruneCalls() {
   const cutoff = nowMs() - 60_000;
   while (calls.length && calls[0] < cutoff) calls.shift();
@@ -24,7 +24,7 @@ async function enforceRateLimit() {
     await new Promise(r => setTimeout(r, waitMs));
     pruneCalls();
   }
-  // 1 req/sec (tussen opeenvolgende)
+  // 1 req/sec tussen opeenvolgende
   const last = calls[calls.length - 1];
   if (last && nowMs() - last < 1_000) {
     const waitMs = 1_000 - (nowMs() - last);
@@ -34,7 +34,7 @@ async function enforceRateLimit() {
 }
 
 // ——— Helpers ———
-function json(res, status, data) {
+function sendJson(res, status, data) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.end(JSON.stringify(data));
@@ -42,14 +42,18 @@ function json(res, status, data) {
 
 function getApiKey() {
   const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("Missing GEMINI_API_KEY");
+  if (!key) {
+    const e = new Error("Missing GEMINI_API_KEY");
+    e.status = 500;
+    throw e;
+  }
   return key;
 }
 
 function buildPrompt(dossier) {
   // Strikt: geen externe feiten, alleen redeneren over de input. Korte, actiegerichte output.
   return [
-    "Je bent een juridische/vastegoed-analist. Werk:",
+    "Je bent een juridische/vastgoed-analist. Werk:",
     "- Alleen op basis van de aangeleverde tekst hieronder.",
     "- Geen externe bronnen/data verzinnen of citeren.",
     "- Wees kort, concreet, puntsgewijs. Nederlands.",
@@ -79,26 +83,17 @@ function buildPrompt(dossier) {
 
 async function callGeminiOnce({ model, text, apiKey }) {
   const url = `${GEMINI_ENDPOINT}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const body = {
-    contents: [
-      {
-        parts: [{ text }]
-      }
-    ]
-  };
+  const body = { contents: [{ parts: [{ text }] }] };
 
   const resp = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json; charset=utf-8"
-    },
+    headers: { "Content-Type": "application/json; charset=utf-8" },
     body: JSON.stringify(body)
   });
 
-  const isJson = (resp.headers.get("content-type") || "").includes("application/json");
-  const payload = isJson ? await resp.json() : await resp.text();
+  const contentType = resp.headers.get("content-type") || "";
+  const payload = contentType.includes("application/json") ? await resp.json() : await resp.text();
 
-  // Normaliseer bekende foutcodes
   if (!resp.ok) {
     const err = new Error("Gemini error");
     err.status = resp.status;
@@ -106,13 +101,12 @@ async function callGeminiOnce({ model, text, apiKey }) {
     throw err;
   }
 
-  // Extractie: candidates[0].content.parts[].text
   let textOut = "";
   try {
     const parts = payload?.candidates?.[0]?.content?.parts || [];
     textOut = parts.map(p => p.text || "").join("").trim();
-  } catch (_) {
-    // val stil terug op lege string
+  } catch {
+    // noop
   }
   return { text: textOut, raw: payload };
 }
@@ -125,7 +119,6 @@ async function callGeminiWithPolicy({ prompt, apiKey, models = DEFAULT_MODELS })
   for (let i = 0; i < models.length; i++) {
     const model = models[i];
     try {
-      // Rate limiting per call (1/sec, 8/min)
       await enforceRateLimit();
       const { text, raw } = await callGeminiOnce({ model, text: prompt, apiKey });
       modelUsed = model;
@@ -133,7 +126,7 @@ async function callGeminiWithPolicy({ prompt, apiKey, models = DEFAULT_MODELS })
     } catch (err) {
       lastError = err;
 
-      // 429 → backoff 2s, dan één extra poging met 4s
+      // 429 → backoff 2s, dan 4s
       if (err.status === 429) {
         throttleNotice = "Gemini throttle: backoff toegepast (2s→4s).";
         await new Promise(r => setTimeout(r, 2000));
@@ -152,7 +145,7 @@ async function callGeminiWithPolicy({ prompt, apiKey, models = DEFAULT_MODELS })
               return { text: retry2.text, raw: retry2.raw, modelUsed, throttleNotice };
             } catch (err3) {
               lastError = err3;
-              // Ga door naar volgend model (fallback)
+              // ga naar volgende model
             }
           } else {
             lastError = err2;
@@ -160,39 +153,31 @@ async function callGeminiWithPolicy({ prompt, apiKey, models = DEFAULT_MODELS })
         }
       }
 
-      // 404 / NOT_FOUND → switch naar volgend model in lijst
+      // 404/NOT_FOUND → fallback naar volgend model
       const notFoundMsg = (err.payload && (err.payload.error?.status || err.payload.error?.message || "")).toString();
       if (err.status === 404 || /NOT_FOUND/i.test(notFoundMsg)) {
-        // probeer volgend model in de loop
         continue;
       }
 
-      // Andere fout → probeer ook fallback model
+      // Andere fout → ook door naar fallback
       continue;
     }
   }
 
-  // Als alle modellen faalden:
   const status = lastError?.status || 500;
   const details = lastError?.payload || { message: String(lastError) };
   const message =
     status === 429
       ? "Gemini-throttling blijft actief na backoff. Probeer het zo dadelijk opnieuw."
       : "Gemini kon geen resultaat leveren.";
-  const errorOut = {
-    ok: false,
-    status,
-    message,
-    details
-  };
-  const err = new Error(message);
-  err.status = status;
-  err.out = errorOut;
-  throw err;
+  const out = { ok: false, status, message, details };
+  const e = new Error(message);
+  e.status = status;
+  e.out = out;
+  throw e;
 }
 
 function splitToSections(markdown) {
-  // Probeert de drie secties grof te verdelen, maar geeft ook raw terug
   const result = {
     red_flags: "",
     actions: "",
@@ -210,38 +195,42 @@ function splitToSections(markdown) {
     if (l.startsWith("vragen")) { current = "questions"; continue; }
     if (l.startsWith("disclaimer")) { current = "disclaimer"; continue; }
     if (!current) continue;
-    // Append line to the current section (preserve formatting)
-    if (result[current]) result[current] += "\n" + line;
-    else result[current] = line;
+    result[current] += (result[current] ? "\n" : "") + line;
   }
-  // Trim sections
   for (const k of ["red_flags","actions","questions","disclaimer"]) {
     result[k] = (result[k] || "").trim();
   }
   return result;
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   try {
     if (req.method !== "POST") {
       res.setHeader("Allow", "POST");
-      return json(res, 405, { ok: false, error: "Method Not Allowed. Use POST { dossier }." });
+      return sendJson(res, 405, { ok: false, error: "Method Not Allowed. Use POST { dossier }." });
     }
 
     let body = req.body;
     if (typeof body === "string") {
-      try { body = JSON.parse(body); } catch (_) { /* ignore */ }
+      try { body = JSON.parse(body); } catch { /* ignore */ }
     }
-    const dossier = (body && body.dossier ? String(body.dossier) : "").trim();
+    if (!body || typeof body !== "object") {
+      // Sommige runtimes leveren de ruwe buffer; probeer dan zelf te parsen
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const raw = Buffer.concat(chunks).toString("utf8");
+      try { body = JSON.parse(raw || "{}"); } catch { body = {}; }
+    }
 
+    const dossier = (body && body.dossier ? String(body.dossier) : "").trim();
     if (!dossier) {
-      return json(res, 400, { ok: false, error: "Bad Request: veld 'dossier' is verplicht." });
+      return sendJson(res, 400, { ok: false, error: "Bad Request: veld 'dossier' is verplicht." });
     }
 
     const apiKey = getApiKey();
     const prompt = buildPrompt(dossier);
 
-    const { text, raw, modelUsed, throttleNotice } = await callGeminiWithPolicy({
+    const { text, modelUsed, throttleNotice } = await callGeminiWithPolicy({
       prompt,
       apiKey,
       models: DEFAULT_MODELS
@@ -249,7 +238,7 @@ module.exports = async function handler(req, res) {
 
     const sections = splitToSections(text);
 
-    return json(res, 200, {
+    return sendJson(res, 200, {
       ok: true,
       model: modelUsed,
       throttleNotice: throttleNotice || null,
@@ -260,7 +249,6 @@ module.exports = async function handler(req, res) {
         disclaimer: sections.disclaimer,
         raw_text: sections.raw
       },
-      // minimale usage/debug-info zonder gevoelige data
       meta: {
         received_chars: dossier.length,
         timestamp: new Date().toISOString()
@@ -269,6 +257,6 @@ module.exports = async function handler(req, res) {
   } catch (err) {
     const status = err.status || 500;
     const payload = err.out || { ok: false, error: err.message || "Internal Error" };
-    return json(res, status, payload);
+    return sendJson(res, status, payload);
   }
-};
+}
