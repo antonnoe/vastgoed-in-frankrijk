@@ -1,14 +1,15 @@
 // /public/script.js
 // Client-UI voor Immodiagnostique.
-// - Alleen POST naar /api/analyse en /api/compose (geen externe calls).
-// - Neemt ook "vraagprijs" en "contactkanaal" mee.
-// - Resultaatpanelen + smooth scroll + simpele click-throttle.
-// - Dynamische knopteksten o.b.v. gekozen kanaal (email/pb/phone/letter).
+// - Alle externe data gaat via eigen /api/* routes (nooit direct vanaf de browser).
+// - Ondersteunt: dossier-UI, AI-analyse (/api/analyse), AI-berichten (/api/compose),
+//   en officiële bronnen via één keten-call (/api/summary).
+// - Dynamische CTA-teksten o.b.v. gekozen contactkanaal (email/pb/phone/letter).
 
 (() => {
   // ---------- Elementen ----------
   const $ = (sel) => document.querySelector(sel);
 
+  // Invoer
   const adLinkEl   = $('#adLink');
   const cityEl     = $('#city');
   const priceEl    = $('#price');        // verplicht
@@ -17,9 +18,14 @@
   const numberEl   = $('#number');
   const adTextEl   = $('#adText');
 
+  // Actieknoppen (bestaand)
   const btnGenerate   = $('#btn-generate');
   const btnMakePrompt = $('#btn-make-prompt');
 
+  // Dynamisch toe te voegen knop: “Haal gegevens op”
+  let btnFetch = $('#btn-fetch'); // mocht in HTML bestaan; anders maken we ‘m
+
+  // Panels/uitvoer
   const dossierPanel = $('#dossier-panel');
   const dossierOut   = $('#dossier-output');
 
@@ -29,6 +35,7 @@
   const letterPanel = $('#letter-panel');
   const letterOut   = $('#letter-output');
 
+  // Compose CTA’s
   const btnNotary = $('#btn-notary');
   const btnAgent  = $('#btn-agent');
   const btnSeller = $('#btn-seller');
@@ -39,8 +46,14 @@
   const sanitize = (s) => String(s || '').trim();
 
   function smoothReveal(panel) {
-    if (panel.hasAttribute('hidden')) panel.removeAttribute('hidden');
-    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (panel && panel.hasAttribute('hidden')) panel.removeAttribute('hidden');
+    panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function escapeHtml(str = '') {
+    return str.replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
   }
 
   function buildFullAddress({ number, street, postcode, city }) {
@@ -96,6 +109,7 @@
     return lines.join("\n");
   }
 
+  // ---------- Rendering ----------
   function renderDossier(values) {
     const { adLink, city, price } = values;
     const fullAddr = buildFullAddress(values);
@@ -131,6 +145,7 @@
           </div>
         </li>
       </ol>
+      <div id="official-data"></div>
     `;
     smoothReveal(dossierPanel);
   }
@@ -167,23 +182,121 @@
     smoothReveal(letterPanel);
   }
 
-  function showError(panel, message, detail) {
-    const html = `
-      <div class="alert error">
-        <strong>Fout:</strong> ${escapeHtml(message || 'Onbekende fout')}
-        ${detail ? `<div class="tiny muted">${escapeHtml(detail)}</div>` : ''}
-      </div>
-    `;
-    if (panel === 'overview') {
-      overviewOut.innerHTML = html;
-      smoothReveal(overviewPanel);
-    } else if (panel === 'letter') {
-      letterOut.innerHTML = html;
-      smoothReveal(letterPanel);
-    } else {
-      dossierOut.innerHTML = html;
-      smoothReveal(dossierPanel);
+  function renderOfficialSummary(summary) {
+    const mount = $('#official-data');
+    if (!mount) return;
+
+    const parts = [];
+
+    // Commune/INSEE
+    if (summary?.commune) {
+      const c = summary.commune;
+      parts.push(`
+        <section>
+          <h3>Gegevens uit officiële bronnen</h3>
+          <div class="box">
+            <div><strong>Gemeente:</strong> ${escapeHtml(c.name || '')} (INSEE: <code>${escapeHtml(c.insee || '')}</code>)</div>
+            <div class="tiny muted">Departement: ${escapeHtml(c.department?.name || '')} (${escapeHtml(c.department?.code || '')})</div>
+          </div>
+        </section>
+      `);
     }
+
+    // Géorisques
+    if (summary?.georisques) {
+      const gr = summary.georisques;
+      const items = (gr.summary || []).map(s => {
+        const badge = s.present ? 'ja' : 'nee';
+        return `<li><span class="${s.present ? 'ok' : 'muted'}">${escapeHtml(s.label)}</span> — ${badge}</li>`;
+      }).join('') || '<li class="muted">Geen categorieën gevonden</li>';
+      parts.push(`
+        <section>
+          <h4>Géorisques</h4>
+          <div class="box">
+            <ul>${items}</ul>
+            <div class="tiny"><a href="${escapeAttr(gr.links?.commune)}" target="_blank" rel="noopener">Open Géorisques (commune)</a></div>
+          </div>
+        </section>
+      `);
+    }
+
+    // GPU (zones)
+    if (summary?.gpu) {
+      const z = summary.gpu.zones || [];
+      const items = z.length
+        ? z.map(item => `<li>${escapeHtml(item.code || item.label || 'Zone')} — <span class="tiny muted">x${item.count}</span></li>`).join('')
+        : '<li class="muted">Geen zone-urba polygonen gevonden</li>';
+      parts.push(`
+        <section>
+          <h4>Géoportail Urbanisme (PLU/SUP)</h4>
+          <div class="box">
+            <ul>${items}</ul>
+            <div class="tiny">
+              <a href="${escapeAttr(summary.gpu.links?.gpu_site_commune)}" target="_blank" rel="noopener">Open GPU (gemeente)</a>
+            </div>
+          </div>
+        </section>
+      `);
+    }
+
+    // GPU documenten
+    if (summary?.gpudoc) {
+      const docs = summary.gpudoc.documents || [];
+      const items = docs.length
+        ? docs.map(d => {
+            const t = [d.type, d.title].filter(Boolean).join(' — ');
+            const date = d.date ? `<span class="tiny muted"> (${escapeHtml(d.date)})</span>` : '';
+            return `<li><a href="${escapeAttr(d.url)}" target="_blank" rel="noopener">${escapeHtml(t || 'Document')}</a>${date}</li>`;
+          }).join('')
+        : '<li class="muted">Geen documenten via API gevonden</li>';
+
+      parts.push(`
+        <section>
+          <h4>Documenten (PLU/SUP)</h4>
+          <div class="box">
+            <ul>${items}</ul>
+            <div class="tiny">
+              <a href="${escapeAttr(summary.gpudoc.links?.gpu_recherche)}" target="_blank" rel="noopener">Zoek in GPU</a>
+            </div>
+          </div>
+        </section>
+      `);
+    }
+
+    // DVF
+    if (summary?.dvf) {
+      const dvf = summary.dvf;
+      let inner = '<li class="muted">Geen samenvatting beschikbaar (gebruik links)</li>';
+      if (dvf.summary?.total) {
+        const total = dvf.summary.total;
+        inner = `
+          <li>Totaal transacties (met waarde): <strong>${escapeHtml(String(total.count))}</strong></li>
+          <li>Mediaan prijs: <strong>${fmtMoney(total.median_price)}</strong></li>
+          <li>Mediaan €/m²: <strong>${fmtMoney(total.median_eur_m2)}</strong></li>
+        `;
+      }
+      parts.push(`
+        <section>
+          <h4>DVF (verkoopprijzen)</h4>
+          <div class="box">
+            <ul>${inner}</ul>
+            <div class="tiny">
+              <a href="${escapeAttr(dvf.links?.etalab_app)}" target="_blank" rel="noopener">Open Etalab DVF</a>
+              ${dvf.links?.data_gouv_dep_csv ? ` · <a href="${escapeAttr(dvf.links.data_gouv_dep_csv)}" target="_blank" rel="noopener">Departement CSV</a>` : ''}
+            </div>
+          </div>
+        </section>
+      `);
+    }
+
+    mount.innerHTML = parts.join('\n');
+  }
+
+  function fmtMoney(n) {
+    if (n == null) return '—';
+    try {
+      return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n);
+    } catch { return String(n); }
   }
 
   function mdListToHtml(text = '') {
@@ -193,36 +306,30 @@
     return `<ul>${items.map(li => `<li>${escapeHtml(li)}</li>`).join('')}</ul>`;
   }
 
-  function escapeHtml(str = '') {
-    return str.replace(/[&<>"']/g, (ch) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[ch]));
+  function escapeAttr(v) {
+    return escapeHtml(String(v || ''));
   }
 
   // ---------- Dynamische CTA-teksten ----------
   function updateCTALabels() {
     const channel = getChannel(); // email | pb | phone | letter
-    // Bepaal het woord: bericht/brief/belscript
     const word =
       channel === 'letter' ? 'brief' :
       channel === 'phone'  ? 'belscript' :
       'bericht';
 
-    // Notaris (FR)
     if (btnNotary) {
       btnNotary.textContent =
         word === 'belscript'
           ? 'Maak belscript voor notaris (FR)'
           : `Maak ${word} voor notaris (FR)`;
     }
-    // Makelaar (NL)
     if (btnAgent) {
       btnAgent.textContent =
         word === 'belscript'
           ? 'Maak belscript voor makelaar (NL)'
           : `Maak ${word} voor makelaar (NL)`;
     }
-    // Verkoper (FR/NL)
     if (btnSeller) {
       btnSeller.textContent =
         word === 'belscript'
@@ -230,12 +337,9 @@
           : `Maak ${word} aan verkoper (FR/NL)`;
     }
   }
-
-  // Koppel change-events aan radiobuttons
   document.querySelectorAll('input[name="channel"]').forEach(r =>
     r.addEventListener('change', updateCTALabels)
   );
-  // Init bij load
   updateCTALabels();
 
   // ---------- Networking ----------
@@ -281,7 +385,7 @@
     };
   }
 
-  // ---------- Handlers ----------
+  // ---------- Handlers: dossier/analyse ----------
   btnGenerate?.addEventListener('click', withLock(btnGenerate, async () => {
     const values = collectInput();
     if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
@@ -312,6 +416,7 @@
     }
   }));
 
+  // ---------- Handlers: compose ----------
   function onCompose(role) {
     const btn = role === 'notary-fr' ? btnNotary : role === 'agent-nl' ? btnAgent : btnSeller;
     return withLock(btn, async () => {
@@ -320,7 +425,7 @@
       if (!values.price) { alert('Vraagprijs is verplicht.'); priceEl?.focus(); return; }
 
       const dossierText = composeDossierText(values);
-      const channel = values.channel; // email | pb | phone | letter
+      const channel = values.channel;
 
       try {
         letterOut.innerHTML = `<div class="alert info">Bericht wordt gegenereerd…</div>`;
@@ -338,8 +443,71 @@
       }
     });
   }
-
   btnNotary?.addEventListener('click', onCompose('notary-fr'));
   btnAgent?.addEventListener('click', onCompose('agent-nl'));
   btnSeller?.addEventListener('click', onCompose('seller-mixed'));
+
+  // ---------- Handler: officiële bronnen via /api/summary ----------
+  // Knop toevoegen als hij niet in de HTML staat
+  (function ensureFetchButton() {
+    if (!btnFetch) {
+      btnFetch = document.createElement('button');
+      btnFetch.id = 'btn-fetch';
+      btnFetch.className = 'btn';
+      btnFetch.textContent = 'Haal gegevens op';
+      // Plaats ‘m logisch naast “Maak AI-prompt”
+      const ref = btnMakePrompt || btnGenerate || document.body;
+      ref.parentNode?.insertBefore(btnFetch, ref.nextSibling);
+    }
+    btnFetch.addEventListener('click', withLock(btnFetch, async () => {
+      const values = collectInput();
+      if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
+
+      // Render (of update) basis-dossier zodat er een mountpunt is
+      renderDossier(values);
+
+      const target = $('#official-data');
+      if (target) {
+        target.innerHTML = `<div class="alert info">Officiële gegevens worden opgehaald…</div>`;
+      }
+
+      try {
+        const qs = new URLSearchParams();
+        if (values.city) qs.set('city', values.city);
+        if (values.postcode) qs.set('postcode', values.postcode);
+        const res = await fetch(`/api/summary?${qs.toString()}`, { headers: { 'Accept': 'application/json' } });
+        const isJson = (res.headers.get('content-type') || '').includes('application/json');
+        const data = isJson ? await res.json() : await res.text();
+
+        if (!res.ok || !data?.ok) {
+          const msg = isJson ? (data?.error || 'Kon officiële gegevens niet ophalen.') : `HTTP ${res.status}`;
+          showError('dossier', msg, isJson ? JSON.stringify(data) : String(data));
+          return;
+        }
+        renderOfficialSummary(data);
+      } catch (err) {
+        showError('dossier', err.message, err.stack);
+      }
+    }));
+  })();
+
+  // ---------- Fouten ----------
+  function showError(panel, message, detail) {
+    const html = `
+      <div class="alert error">
+        <strong>Fout:</strong> ${escapeHtml(message || 'Onbekende fout')}
+        ${detail ? `<div class="tiny muted">${escapeHtml(detail)}</div>` : ''}
+      </div>
+    `;
+    if (panel === 'overview') {
+      overviewOut.innerHTML = html;
+      smoothReveal(overviewPanel);
+    } else if (panel === 'letter') {
+      letterOut.innerHTML = html;
+      smoothReveal(letterPanel);
+    } else {
+      dossierOut.innerHTML = html;
+      smoothReveal(dossierPanel);
+    }
+  }
 })();
