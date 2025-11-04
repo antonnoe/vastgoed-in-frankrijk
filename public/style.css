@@ -1,215 +1,210 @@
 /* /public/style.css */
-/* Immodiagnostique – UI polish
-   - Grotere inputs & placeholders, mooiere velden
-   - CTA gecentreerd & prominent (#800000)
-   - Contactkanaal per ontvanger + taal, duidelijk gescheiden
-   - Spinner (maroon) i.p.v. progressbar
-   - Grid voor velden (naast elkaar), prijs-veld springt eruit
+/* Immodiagnostique – UI-styling
+   - Brand: #800000
+   - Nette inputs (groter lettertype), grid met 2 kolommen waar logisch
+   - Buttons prominent, export pas nuttig na analyse (via JS)
+   - Belangrijk: [hidden]{display:none!important} → stopt hangerende spinner in alle browsers
 */
 
 :root{
   --brand:#800000;
   --ink:#222;
   --muted:#666;
+  --bg:#fafafa;
+  --card:#fff;
+  --border:#e4e4e4;
   --ok:#0a7f00;
   --warn:#b00020;
-  --line:#e6e6e6;
-  --bg:#fff;
 }
 
-*{ box-sizing:border-box; }
-html,body{ height:100%; }
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
 body{
-  margin:0;
-  font: 15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
   color:var(--ink);
-  background:#fff;
+  background:var(--bg);
 }
 
-.container{ max-width: 800px; margin:0 auto; padding:0 16px; }
+[hidden]{display:none !important;} /* <-- cruciaal voor spinner */
 
-/* Header */
-.site-header{ border-bottom:1px solid var(--line); background:#fff; }
-.brand{ margin:16px 0 4px; font-size:28px; color:var(--brand); }
-.subtitle{ margin:0 0 12px; color:var(--muted); }
+.container{max-width:820px;margin:0 auto;padding:20px}
 
-/* Copy */
-h2{ font-size:20px; margin:18px 0 10px; }
-h3{ font-size:18px; margin:16px 0 10px; }
-h4{ font-size:15px; margin:12px 0 6px; }
-
-.muted{ color:var(--muted); }
-.small{ font-size:12px; }
-.req{ color:var(--warn); font-weight:700; }
-
-.intro{
-  border:1px solid var(--line);
-  border-radius:10px;
-  padding:12px 14px;
-  background:#fff;
+.site-header{background:#fff;border-bottom:1px solid var(--border)}
+.site-header .brand{
+  margin:0;
+  font-size:24px;
+  color:var(--brand);
+  letter-spacing:0.5px;
 }
-
-/* Invoer-grid */
-.input-grid{
-  display:grid;
-  grid-template-columns: repeat(12, 1fr);
-  gap: 14px;
-  margin-top:12px;
-}
-.field{ grid-column: span 6; display:flex; flex-direction:column; }
-.field.required label{ font-weight:700; }
-.field--full{ grid-column: 1 / -1; }
-
-.field label{ margin-bottom:6px; font-weight:600; }
-.field input,
-.field textarea{
-  width:100%;
-  border:1px solid var(--line);
-  border-radius:12px;
-  padding:14px 14px;
-  font-size:16px; /* grotere tekst in velden */
-  outline:none;
-  background:#fff;
-  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
-}
-.field input::placeholder,
-.field textarea::placeholder{ color:#999; font-size:15px; }
-.field input:focus,
-.field textarea:focus{
-  border-color: var(--brand);
-  box-shadow: 0 0 0 4px rgba(128,0,0,.08);
-  background:#fff;
-}
-
-/* Prijsveld highlight */
-.input-grid .field:has(#price){
-  grid-column: span 6;
-  border:1px dashed rgba(128,0,0,.35);
-  border-radius:12px;
-  padding:10px;
-  background:#fff7f7;
-}
-.field label[for="price"]::after{
-  content:"  • Facultatief maar wel aanbevolen";
+.site-header .tagline{
+  margin:4px 0 0;
   color:var(--muted);
-  font-weight:400;
-  font-size:12px;
-  margin-left:8px;
+  font-size:14px;
 }
 
-/* CTA gecentreerd */
-.actions{ margin:18px 0 8px; display:flex; justify-content:center; }
+.card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:18px;
+  margin:16px 0;
+}
+
+/* Titels */
+h1,h2,h3,h4{margin:0 0 8px}
+h2{font-size:20px}
+h3{font-size:18px}
+h4{font-size:16px}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+
+/* Form grid */
+.form-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:14px 16px;
+}
+
+.field{display:flex;flex-direction:column}
+.field.col-2{grid-column:1 / -1}
+.field label{font-weight:600;margin-bottom:6px}
+.req{color:var(--warn)}
+
+/* Inputs – groter, rustiger */
+input[type="text"],
+input[type="url"],
+input[type="number"],
+textarea,
+select{
+  font-size:16px;
+  padding:12px 12px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:#fff;
+  outline:none;
+  transition:border-color .15s ease, box-shadow .15s ease;
+}
+input::placeholder, textarea::placeholder{color:#999}
+input:focus, textarea:focus, select:focus{
+  border-color:var(--brand);
+  box-shadow:0 0 0 3px rgba(128,0,0,.12);
+}
+
+.help{margin-top:6px;color:var(--muted);font-size:13px}
+
+/* Acties */
+.actions{
+  grid-column:1 / -1;
+  display:flex;
+  align-items:center;
+  justify-content:center; /* CTA prominent gecentreerd */
+  gap:10px;
+  margin-top:6px;
+}
+
+/* Buttons */
 .btn{
+  appearance:none;
+  border:1px solid var(--brand);
+  background:#fff;
+  color:var(--brand);
+  padding:12px 16px;
+  border-radius:999px;
+  font-weight:600;
+  cursor:pointer;
+  transition:transform .05s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.btn:hover{transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+
+.btn.primary{
   background:var(--brand);
   color:#fff;
-  border:0;
-  border-radius:12px;
-  padding:12px 16px;
-  font-weight:800;
-  cursor:pointer;
-  transition: transform .05s ease, filter .15s ease, opacity .15s ease;
 }
-.btn:hover{ filter:brightness(.95); }
-.btn:active{ transform: translateY(1px); }
-.btn[disabled], .btn.is-loading{ opacity:.7; cursor:not-allowed; }
-.btn-primary--xl{ font-size:17px; padding:14px 22px; }
+.btn.outline{
+  background:#fff;
+  color:var(--brand);
+  border-color:var(--brand);
+}
 
-/* Loader (spinner) */
+/* Loader & log */
 .loader{
-  display:flex; align-items:center; gap:10px;
-  justify-content:center;
-  margin:8px 0 4px;
+  grid-column:1 / -1;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 0 0;
 }
 .spinner{
-  width:22px; height:22px; border-radius:50%;
-  border:3px solid rgba(128,0,0,.22);
-  border-top-color: var(--brand);
-  animation: spin 0.9s linear infinite;
+  width:18px;height:18px;border-radius:50%;
+  border:3px solid #ddd;border-top-color:var(--brand);
+  animation:spin 1s linear infinite;
 }
-.spinner-label{ color:var(--muted); font-size:13px; }
-@keyframes spin{ to { transform: rotate(360deg);} }
+.spinner-label{color:var(--muted)}
+@keyframes spin{to{transform:rotate(360deg)}}
 
-/* Contactkanaal & taal (duidelijk gescheiden) */
-.channel--separated{
-  border-top: 8px solid #f6f6f6;
-  margin-top: 12px;
-  padding-top: 14px;
+.progress-log{
+  grid-column:1 / -1;
+  border-top:1px dashed var(--border);
+  padding-top:10px;
+  margin-top:8px;
+  max-height:150px;
+  overflow:auto;
 }
-.recipient{
-  border:1px solid var(--line);
-  border-radius:12px;
-  padding:12px 12px;
-  margin:10px 0;
+
+/* Panels & content */
+.checklist{margin:0;padding-left:18px}
+.box{
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:10px 12px;
   background:#fff;
+  margin-top:6px;
 }
-.row{ display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center; margin: 6px 0 10px; }
+.note{margin-top:4px}
 
-.radio-row{
-  display:flex; flex-wrap:wrap; gap:10px 10px; align-items:center;
+.badgelist{list-style:none;margin:0;padding:0}
+.badgelist .badge{
+  display:inline-block;width:1.4em;text-align:center;margin-right:6px;
 }
-.radio{
-  display:inline-flex; align-items:center; gap:6px;
-  border:1px solid var(--line);
-  border-radius:999px;
-  padding:6px 10px; background:#fff;
-}
-.radio input{ accent-color: var(--brand); }
+.ok{color:var(--ok)} .warn{color:var(--warn)}
 
-.select{
-  display:inline-flex; align-items:center; gap:8px;
-  border:1px solid var(--line);
-  border-radius:999px;
-  padding:6px 10px;
-  background:#fff;
+/* Contactkanaal */
+.contact-grid{
+  display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;
 }
-.select select{
-  border:0; outline:0; background:transparent; font: inherit;
-}
+.recipient{border:1px solid var(--border);border-radius:10px;padding:12px}
+.radio-row{display:flex;flex-direction:column;gap:4px;margin:6px 0 8px}
+.recipient .row{display:flex;align-items:center;gap:8px;margin:6px 0}
 
-/* Kleinere compose-knoppen */
-.btn-compact{ padding:8px 12px; border-radius:10px; font-weight:700; }
-
-/* Panels */
-.panel, .box{
-  border:1px solid var(--line);
-  border-radius:12px;
-  background:#fff;
-  padding: 12px 14px;
-  margin-top:10px;
+/* Overzicht / Letters */
+.alert{
+  border-radius:8px;
+  padding:10px 12px;
+  border:1px solid var(--border);
+  background:#fff6f6;
 }
-.badgelist{ list-style:none; margin:0; padding:0; }
-.badge{ display:inline-block; width:1.4em; text-align:center; margin-right:6px; }
-.ok{ color:var(--ok); } .warn{ color:var(--warn); }
+.alert.info{background:#f7faff;border-color:#d8e7ff}
+.alert.warn{background:#fff6f0;border-color:#ffd6b3}
+.alert.error{background:#fff5f5;border-color:#f3cccc}
+
+pre.letter{
+  background:#f8f8f8;
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:12px;
+  overflow:auto;
+}
 
 /* SWOT */
-.swot-grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.swot-cell{ border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
-.swot-cell.ok h4{ color: var(--ok); }
-.swot-cell.warn h4{ color: var(--warn); }
-
-/* Alerts */
-.alert{ border:1px solid var(--line); border-radius:12px; padding:8px 10px; background:#fff; }
-.alert.info{ border-color:#cfe3ff; background:#f4f8ff; }
-.alert.warn{ border-color:#ffe0a3; background:#fff8e6; }
-.alert.error{ border-color:#f3b5b5; background:#fff5f5; }
-
-/* Disclaimer */
-.disclaimer{
-  margin:16px 0 40px;
-  padding: 10px 12px;
-  border:1px solid var(--line);
-  border-radius:12px;
-}
-
-/* Print */
-@media print{
-  .site-header, .actions, .channel, .recipient, #loader{ display:none !important; }
-  .container{ max-width: none; padding: 0; }
-}
+.swot-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.swot-cell{border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+.swot-cell.ok h4{color:var(--ok)}
+.swot-cell.warn h4{color:var(--warn)}
 
 /* Responsief */
-@media (max-width: 680px){
-  .input-grid{ grid-template-columns: repeat(6,1fr); }
-  .field{ grid-column: span 6; }
-  .swot-grid{ grid-template-columns:1fr; }
+@media (max-width:760px){
+  .form-grid{grid-template-columns:1fr}
+  .contact-grid{grid-template-columns:1fr}
 }
