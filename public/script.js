@@ -1,12 +1,13 @@
 // /public/script.js
-// Immodiagnostique – zichtbare voortgang per stap (geen tijdschattingen)
-// - Spinner toont nu: "Raadpleegt gemeente", "Raadpleegt Géorisques", "Raadpleegt GPU", "Raadpleegt GPU-documenten", "Raadpleegt DVF", "Genereert AI-analyse"
-// - Samenvatting wordt incrementeel opgebouwd: resultaten renderen zodra een stap klaar is
-// - Compose & Export komen pas na analyse beschikbaar
+// Immodiagnostique – robuuste voortgang + timeouts + annuleren
+// - Per stap (commune → georisques → gpu → gpu-doc → dvf → analyse) een harde timeout (12s) via AbortController
+// - Zichtbare statusregels in de spinner (“Raadpleegt …”) + mini-logboek onder de knop
+// - “Annuleer” stopt alle lopende requests en reset de UI
+// - Compose/Export pas zichtbaar na een voltooide analyse
+// - Alleen /api/* calls (nooit naar externe origin vanuit de browser)
 
 window.addEventListener('DOMContentLoaded', () => {
   const $  = (s) => document.querySelector(s);
-  const $$ = (s) => Array.from(document.querySelectorAll(s));
 
   // Invoer
   const adLinkEl   = $('#adLink');
@@ -19,7 +20,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // UI
   const btnPrimary   = $('#btn-generate');
-  const loader       = $('#loader');
+  const loader       = $('#loader');            // bevat .spinner-label
+  const logArea      = $('#progress-log');      // optioneel <div id="progress-log"></div> in HTML
   const dossierPanel = $('#dossier-panel');
   const dossierOut   = $('#dossier-output');
   const overviewPanel= $('#overview-panel');
@@ -27,12 +29,21 @@ window.addEventListener('DOMContentLoaded', () => {
   const letterPanel  = $('#letter-panel');
   const letterOut    = $('#letter-output');
 
-  // Compose
+  // Compose-knoppen (optioneel aanwezig)
   const btnNotary = $('#btn-notary');
   const btnAgent  = $('#btn-agent');
   const btnSeller = $('#btn-seller');
 
-  // Helpers
+  // ========== State voor annuleren ==========
+  let runId = 0;                  // verhoogt bij elke run
+  let activeControllers = [];     // AbortControllers van lopende requests
+
+  function resetActiveControllers() {
+    try { activeControllers.forEach(c => c.abort()); } catch {}
+    activeControllers = [];
+  }
+
+  // ========== Helpers ==========
   const sanitize = (s) => String(s || '').trim();
   const escapeHtml = (str='') => str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);
   const escapeAttr = (v) => escapeHtml(String(v || ''));
@@ -40,9 +51,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
   function fmtMoney(n) {
     if (n == null || n === '') return '—';
-    try{
+    try {
       return new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(Number(n));
-    }catch{ return String(n); }
+    } catch { return String(n); }
   }
 
   function buildFullAddress({ number, street, postcode, city }) {
@@ -54,44 +65,102 @@ window.addEventListener('DOMContentLoaded', () => {
     return parts.join(' ') || '—';
   }
 
-  // ===== Loader / voortgang =====
+  // ========== Loader / status / log ==========
   function setSpinner(msg){
     if (!loader) return;
-    loader.querySelector('.spinner-label').textContent = msg || 'Bezig…';
+    const label = loader.querySelector('.spinner-label');
+    if (label) label.textContent = msg || 'Bezig…';
     loader.removeAttribute('hidden');
+    appendLog(msg);
   }
-  function hideSpinner(){
-    loader?.setAttribute('hidden', '');
+  function hideSpinner(){ loader?.setAttribute('hidden',''); }
+
+  function appendLog(line){
+    if (!logArea) return;
+    const p = document.createElement('div');
+    p.className = 'small muted';
+    p.textContent = `${new Date().toLocaleTimeString()} · ${line}`;
+    logArea.appendChild(p);
+    // houd log compact (max 12 regels)
+    while (logArea.childNodes.length > 12) logArea.removeChild(logArea.firstChild);
+  }
+  function clearLog(){ if (logArea) logArea.innerHTML = ''; }
+
+  // ========== HTTP met timeout ==========
+  function withTimeout(ms, fetcher) {
+    const controller = new AbortController();
+    activeControllers.push(controller);
+    const timer = setTimeout(() => controller.abort(new DOMException('TimeoutError','AbortError')), ms);
+    return fetcher(controller.signal)
+      .finally(() => clearTimeout(timer));
   }
 
-  // ===== HTTP =====
-  async function postJson(url, payload) {
-    const res = await fetch(url, {
-      method:'POST',
-      headers: { 'Content-Type':'application/json; charset=utf-8' },
-      body: JSON.stringify(payload),
-    });
-    const ct = res.headers.get('content-type') || '';
-    const isJson = ct.includes('application/json');
-    const data = isJson ? await res.json() : await res.text();
-    if (!res.ok) {
-      if (res.status === 429) throw new Error('429: Gesmoord door rate-limit. Server past backoff toe; probeer zo meteen opnieuw.');
-      const msg = (isJson && (data.error || data.message)) || `HTTP ${res.status}`;
-      const e = new Error(msg); e.detail = isJson ? JSON.stringify(data) : String(data); throw e;
+  async function getJson(url, labelForStatus) {
+    setSpinner(labelForStatus || 'Bezig…');
+    try {
+      const data = await withTimeout(12000, async (signal) => {
+        const res = await fetch(url, { headers: { 'Accept':'application/json' }, signal });
+        const ct = res.headers.get('content-type')||'';
+        const json = ct.includes('application/json') ? await res.json() : null;
+        if (!res.ok || !json?.ok) {
+          const err = new Error((json && (json.error||json.message)) || `HTTP ${res.status}`);
+          err.status = res.status;
+          throw err;
+        }
+        return json;
+      });
+      appendLog(`✔ ${labelForStatus || url}`);
+      return data;
+    } catch (e) {
+      if (e?.name === 'AbortError') {
+        appendLog(`⏱ Timeout bij ${labelForStatus || url}`);
+        return null;
+      }
+      appendLog(`✖ Fout bij ${labelForStatus || url}: ${(e && e.message) || 'onbekend'}`);
+      return null;
     }
-    return data;
-  }
-  async function getJson(url) {
-    const res = await fetch(url, { headers: { 'Accept':'application/json' } });
-    const ct = res.headers.get('content-type') || '';
-    const data = ct.includes('application/json') ? await res.json() : null;
-    if (!res.ok || !data?.ok) return null;
-    return data;
   }
 
-  // ===== Rendering =====
+  async function postJson(url, payload, labelForStatus) {
+    setSpinner(labelForStatus || 'Bezig…');
+    try {
+      const data = await withTimeout(20000, async (signal) => {
+        const res = await fetch(url, {
+          method:'POST',
+          headers: { 'Content-Type':'application/json; charset=utf-8' },
+          body: JSON.stringify(payload),
+          signal
+        });
+        const ct = res.headers.get('content-type') || '';
+        const isJson = ct.includes('application/json');
+        const body = isJson ? await res.json() : await res.text();
+
+        if (!res.ok) {
+          if (res.status === 429) {
+            appendLog('↻ 429 throttled – backoff is server-side toegepast');
+          }
+          const errMsg = (isJson && (body.error || body.message)) || `HTTP ${res.status}`;
+          const e = new Error(errMsg);
+          e.detail = isJson ? JSON.stringify(body) : String(body);
+          e.status = res.status;
+          throw e;
+        }
+        appendLog(`✔ ${labelForStatus || url}`);
+        return body;
+      });
+      return data;
+    } catch (e) {
+      if (e?.name === 'AbortError') {
+        appendLog(`⏹ Afgebroken: ${labelForStatus || url}`);
+        throw e;
+      }
+      appendLog(`✖ Fout bij ${labelForStatus || url}: ${e.message || 'onbekend'}`);
+      throw e;
+    }
+  }
+
+  // ========== Rendering ==========
   function renderDossier(values) {
-    const { adLink, city, price } = values;
     const fullAddr = buildFullAddress(values);
     dossierOut.innerHTML = `
       <ol class="checklist">
@@ -99,56 +168,43 @@ window.addEventListener('DOMContentLoaded', () => {
           <strong>1. Officieel adres / advertentie</strong>
           <div class="box">
             <div><em>Invoer:</em><br>${escapeHtml(fullAddr)}</div>
-            ${price ? `<div class="note">Vraagprijs: <strong>${escapeHtml(price)}</strong></div>` : ''}
+            ${values.price ? `<div class="note">Vraagprijs: <strong>${escapeHtml(values.price)}</strong> <span class="small muted">(facultatief maar aanbevolen)</span></div>` : '<div class="small muted">Vraagprijs: — <span>(facultatief maar aanbevolen)</span></div>'}
             <div class="note">Exact perceel later opvragen bij notaris.</div>
-            ${adLink ? `<div class="note">Advertentielink: <code>${escapeHtml(adLink)}</code></div>` : ''}
+            ${values.adLink ? `<div class="note">Advertentielink: <code>${escapeHtml(values.adLink)}</code></div>` : ''}
           </div>
         </li>
         <li>
           <strong>2. Risico's (Géorisques)</strong>
-          <div class="box">
-            Controleer risico's voor: <code>${escapeHtml(city || '—')}</code><br>
-            <span class="note">ERP (≤ 6 maanden) vereist als adres bekend is.</span>
-          </div>
+          <div class="box">ERP (≤ 6 maanden) vereist zodra adres exact is.</div>
         </li>
         <li>
           <strong>3. Verkoopprijzen (DVF)</strong>
-          <div class="box">
-            DVF is op gemeenteniveau (gemeente: <code>${escapeHtml(city || '—')}</code>).
-          </div>
+          <div class="box">Indicatief op gemeenteniveau.</div>
         </li>
         <li>
           <strong>4. Bestemmingsplan (PLU)</strong>
-          <div class="box">
-            Noteer zone & beperkingen via Géoportail Urbanisme (PLU/SUP).
-          </div>
+          <div class="box">Check zone/beperkingen via Géoportail Urbanisme (PLU/SUP).</div>
         </li>
       </ol>
       <div id="official-data"></div>
     `;
-    if (dossierPanel.hasAttribute('hidden')) dossierPanel.removeAttribute('hidden');
+    dossierPanel?.removeAttribute('hidden');
   }
-
   function appendOfficialSection(html) {
-    const mount = $('#official-data');
-    if (!mount) return;
-    const div = document.createElement('div');
-    div.innerHTML = html;
-    mount.appendChild(div);
+    const mount = $('#official-data'); if (!mount) return;
+    const div = document.createElement('div'); div.innerHTML = html; mount.appendChild(div);
   }
-
   function renderCommune(c) {
     appendOfficialSection(`
       <section>
         <h3>Gegevens uit officiële bronnen</h3>
         <div class="box">
-          <div><strong>Gemeente:</strong> ${escapeHtml(c.name || '')} (INSEE: <code>${escapeHtml(c.insee || '')}</code>)</div>
+          <div><strong>Gemeente:</strong> ${escapeHtml(c.name)} (INSEE: <code>${escapeHtml(c.insee)}</code>)</div>
           <div class="small muted">Departement: ${escapeHtml(c.department?.name || '')} (${escapeHtml(c.department?.code || '')})</div>
         </div>
       </section>
     `);
   }
-
   function renderGeorisques(gr) {
     const items = (gr.summary || []).map(s => {
       const badge = s.present ? '✅' : '—';
@@ -160,14 +216,11 @@ window.addEventListener('DOMContentLoaded', () => {
         <h4>Géorisques</h4>
         <div class="box">
           <ul class="badgelist">${items}</ul>
-          <div class="small">
-            <a href="${escapeAttr(gr.links?.commune)}" target="_blank" rel="noopener">Open Géorisques (commune)</a>
-          </div>
+          <div class="small"><a href="${escapeAttr(gr.links?.commune)}" target="_blank" rel="noopener">Open Géorisques (commune)</a></div>
         </div>
       </section>
     `);
   }
-
   function renderGPU(gpu) {
     const z = gpu.zones || [];
     const items = z.length
@@ -178,14 +231,11 @@ window.addEventListener('DOMContentLoaded', () => {
         <h4>Géoportail Urbanisme (PLU/SUP)</h4>
         <div class="box">
           <ul>${items}</ul>
-          <div class="small">
-            <a href="${escapeAttr(gpu.links?.gpu_site_commune)}" target="_blank" rel="noopener">Open GPU (gemeente)</a>
-          </div>
+          <div class="small"><a href="${escapeAttr(gpu.links?.gpu_site_commune)}" target="_blank" rel="noopener">Open GPU (gemeente)</a></div>
         </div>
       </section>
     `);
   }
-
   function renderGPUDoc(gpudoc) {
     const docs = gpudoc.documents || [];
     const items = docs.length
@@ -205,15 +255,14 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
-
   function renderDVF(dvf) {
     let inner = '<li class="muted">Geen samenvatting beschikbaar (gebruik links)</li>';
     if (dvf.summary?.total) {
-      const total = dvf.summary.total;
+      const t = dvf.summary.total;
       inner = `
-        <li>Totaal transacties (met waarde): <strong>${escapeHtml(String(total.count))}</strong></li>
-        <li>Mediaan prijs: <strong>${fmtMoney(total.median_price)}</strong></li>
-        <li>Mediaan €/m²: <strong>${fmtMoney(total.median_eur_m2)}</strong></li>
+        <li>Totaal transacties (met waarde): <strong>${escapeHtml(String(t.count))}</strong></li>
+        <li>Mediaan prijs: <strong>${fmtMoney(t.median_price)}</strong></li>
+        <li>Mediaan €/m²: <strong>${fmtMoney(t.median_eur_m2)}</strong></li>
       `;
     }
     appendOfficialSection(`
@@ -223,7 +272,6 @@ window.addEventListener('DOMContentLoaded', () => {
           <ul>${inner}</ul>
           <div class="small">
             <a href="${escapeAttr(dvf.links?.etalab_app)}" target="_blank" rel="noopener">Open Etalab DVF</a>
-            ${dvf.links?.data_gouv_dep_csv ? ` · <a href="${escapeAttr(dvf.links.data_gouv_dep_csv)}" target="_blank" rel="noopener">Departement CSV</a>` : ''}
           </div>
         </div>
       </section>
@@ -258,10 +306,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
     const warningBlock = `
       <div class="alert warn small">
-        <strong>Let op:</strong> voorkom een overhaaste “coup de cœur”, een term die makelaars graag gebruiken maar die
-        voor de koper risico’s kan inhouden: te snel en op emotie tot aankoop komen. Weeg rustig af, bepaal de totale
-        acquisitiekosten (incl. makelaar en notaris), en plan verbouwingskosten realistisch in. Tip: de koper kan een eigen
-        notaris kiezen; de cumulatieve notariskosten blijven doorgaans gelijk.
+        <strong>Let op:</strong> voorkom een overhaaste “coup de cœur”. Weeg rustig af, bepaal totale acquisitiekosten
+        (incl. makelaar en notaris) en plan verbouwingskosten realistisch in. Tip: de koper kan een eigen notaris kiezen;
+        de cumulatieve notariskosten blijven doorgaans gelijk.
       </div>
     `;
 
@@ -281,79 +328,30 @@ window.addEventListener('DOMContentLoaded', () => {
       ${vragen.length ? `<ul>${vragen.map(v => `<li>${escapeHtml(v)}</li>`).join('')}</ul>` : '<p class="muted">—</p>'}
       ${warningBlock}
     `;
-    if (overviewPanel.hasAttribute('hidden')) overviewPanel.removeAttribute('hidden');
+    overviewPanel?.removeAttribute('hidden');
     overviewPanel.scrollIntoView({ behavior:'smooth', block:'start' });
   }
 
-  // ===== Data-opbouw (stapsgewijs) =====
+  // ========== Data-opbouw ==========
   async function fetchCommune(city, postcode){
     const qs = new URLSearchParams(); if (city) qs.set('city', city); if (postcode) qs.set('postcode', postcode);
-    return await getJson(`/api/commune?${qs.toString()}`);
+    return await getJson(`/api/commune?${qs.toString()}`, 'Raadpleegt gemeente…');
   }
-  async function fetchGeorisques(insee){ return await getJson(`/api/georisques?insee=${encodeURIComponent(insee)}`); }
-  async function fetchGPU(insee){ return await getJson(`/api/gpu?insee=${encodeURIComponent(insee)}`); }
-  async function fetchGPUDoc(insee){ return await getJson(`/api/gpu-doc?insee=${encodeURIComponent(insee)}`); }
-  async function fetchDVF(insee){ return await getJson(`/api/dvf?insee=${encodeURIComponent(insee)}`); }
+  async function fetchGeorisques(insee){ return await getJson(`/api/georisques?insee=${encodeURIComponent(insee)}`, 'Raadpleegt Géorisques…'); }
+  async function fetchGPU(insee){ return await getJson(`/api/gpu?insee=${encodeURIComponent(insee)}`, 'Raadpleegt GPU (PLU/SUP)…'); }
+  async function fetchGPUDoc(insee){ return await getJson(`/api/gpu-doc?insee=${encodeURIComponent(insee)}`, 'Raadpleegt GPU-documenten…'); }
+  async function fetchDVF(insee){ return await getJson(`/api/dvf?insee=${encodeURIComponent(insee)}`, 'Raadpleegt DVF (verkoopprijzen)…'); }
 
-  async function fetchSummarySequential(city, postcode) {
-    const combined = { ok:true, input:{ city, postcode } };
-
-    setSpinner('Raadpleegt gemeente…');
-    const comm = await fetchCommune(city, postcode);
-    if (comm?.commune) {
-      combined.commune = comm.commune;
-      renderCommune(comm.commune);
-    } else {
-      appendOfficialSection(`<div class="alert error"><strong>Gemeente</strong> kon niet worden opgehaald.</div>`);
-      return combined; // zonder INSEE heeft vervolg minder zin
-    }
-
-    const insee = combined.commune.insee;
-    await sleep(100); // klein pauzetje voor duidelijke stapweergave
-
-    setSpinner('Raadpleegt Géorisques…');
-    const gr = await fetchGeorisques(insee);
-    if (gr) { combined.georisques = gr; renderGeorisques(gr); }
-    else { appendOfficialSection(`<div class="alert error"><strong>Géorisques</strong> niet beschikbaar.</div>`); }
-
-    await sleep(100);
-    setSpinner('Raadpleegt GPU (PLU/SUP)…');
-    const gpu = await fetchGPU(insee);
-    if (gpu) { combined.gpu = gpu; renderGPU(gpu); }
-    else { appendOfficialSection(`<div class="alert error"><strong>GPU</strong> niet beschikbaar.</div>`); }
-
-    await sleep(100);
-    setSpinner('Raadpleegt GPU-documenten…');
-    const gpud = await fetchGPUDoc(insee);
-    if (gpud) { combined.gpudoc = gpud; renderGPUDoc(gpud); }
-    else { appendOfficialSection(`<div class="alert error"><strong>GPU-documenten</strong> niet beschikbaar.</div>`); }
-
-    await sleep(100);
-    setSpinner('Raadpleegt DVF (verkoopprijzen)…');
-    const dvf = await fetchDVF(insee);
-    if (dvf) { combined.dvf = dvf; renderDVF(dvf); }
-    else { appendOfficialSection(`<div class="alert error"><strong>DVF</strong> niet beschikbaar.</div>`); }
-
-    combined.meta = { insee, timestamp: new Date().toISOString() };
-    window.__lastSummary = combined;
-    return combined;
-  }
-
-  // ===== Analyse & signalen =====
   function buildSignals(values, summary) {
     const s = {};
     if (values.price && !Number.isNaN(Number(values.price))) s.price = Number(values.price);
-
     if (summary?.dvf?.summary?.total?.median_price) {
       s.dvf = { median_price: Number(summary.dvf.summary.total.median_price) };
     }
-
     if (summary?.georisques?.summary) {
-      const flags = {};
-      for (const item of summary.georisques.summary) flags[item.key] = !!item.present;
+      const flags = {}; for (const item of summary.georisques.summary) flags[item.key] = !!item.present;
       s.georisques = flags;
     }
-
     if (values.adText) {
       const lower = values.adText.toLowerCase();
       const kw = [];
@@ -364,7 +362,7 @@ window.addEventListener('DOMContentLoaded', () => {
       pushIf(/\bpompe à chaleur\b|heat pump\b/, 'warmtepomp');
       pushIf(/\bà rénover\b|travaux|to renovate\b/, 'renovatie/werk');
       if (kw.length) s.dpe = { hints: kw };
-      s.advertentie = { keywords: kw };
+      if (kw.length) s.advertentie = { keywords: kw };
     }
     return s;
   }
@@ -374,16 +372,14 @@ window.addEventListener('DOMContentLoaded', () => {
     const fullAddr = buildFullAddress({ number, street, postcode, city });
     const route = (street || number || postcode) ? 'Route B (adres bekend)' : 'Route A (geen adres)';
     const lines = [];
-    lines.push(`[${route}]`);
-    lines.push("");
+    lines.push(`[${route}]`,'');
     lines.push("1) Officieel adres / advertentie");
     lines.push(`Invoer: ${fullAddr}`);
     if (price) lines.push(`Vraagprijs: ${price}`);
     if (adLink) lines.push(`Advertentielink: ${adLink}`);
-    lines.push("Exact perceelnummer later via notaris opvragen.");
-    lines.push("");
+    lines.push("Exact perceelnummer later via notaris opvragen.",'');
 
-    if (summary?.commune) lines.push(`Gemeente: ${summary.commune.name} (INSEE ${summary.commune.insee}, dep. ${summary.commune.department?.code || '-'})`);
+    if (summary?.commune) lines.push(`Gemeente: ${summary.commune.name} (INSEE ${summary.commune.insee})`);
     if (summary?.georisques) {
       const hits = (summary.georisques.summary || []).filter(s => s.present).map(s => s.label);
       lines.push(`Géorisques: ${hits.length ? hits.join(', ') : 'geen expliciete categorieën gevonden'}`);
@@ -396,24 +392,14 @@ window.addEventListener('DOMContentLoaded', () => {
       const tot = summary.dvf.summary.total;
       lines.push(`DVF (indicatief): transacties=${tot.count}, mediaan prijs≈${fmtMoney(tot.median_price)}, mediaan €/m²≈${fmtMoney(tot.median_eur_m2)}`);
     }
-    lines.push("");
-    lines.push("2) Risico's (Géorisques)");
-    lines.push(`Controleer risico's voor: ${city || '—'}. ERP nodig (≤ 6 maanden) indien adres bekend.`);
-    lines.push("");
-    lines.push("3) Verkoopprijzen (DVF)");
-    lines.push(`DVF is op gemeenteniveau (gemeente: ${city || '—'}).`);
-    lines.push("");
-    lines.push("4) Bestemmingsplan (PLU)");
-    lines.push("Noteer zone en beperkingen via Géoportail Urbanisme (PLU/SUP).");
-    lines.push("");
-    if (adText) {
-      lines.push("Advertentietekst (volledig):");
-      lines.push(adText);
-    }
+    lines.push('','2) Risico\'s (Géorisques)','ERP nodig (≤ 6 maanden) indien adres bekend.','');
+    lines.push('3) Verkoopprijzen (DVF)','DVF is op gemeenteniveau.','');
+    lines.push('4) Bestemmingsplan (PLU)','Noteer zone/beperkingen via Géoportail Urbanisme (PLU/SUP).','');
+    if (adText) { lines.push('Advertentietekst (volledig):', adText); }
     return lines.join("\n");
   }
 
-  // ===== Export (PDF/print) =====
+  // ========== Export ==========
   let btnExport = null;
   function ensureExportButtonOnce() {
     if (btnExport) return;
@@ -433,16 +419,6 @@ window.addEventListener('DOMContentLoaded', () => {
       if (!w) return alert('Pop-up geblokkeerd: sta pop-ups toe voor export.');
       w.document.open(); w.document.write(html); w.document.close(); w.focus(); w.print();
     });
-  }
-
-  function extractSection(html, headingRegex) {
-    if (!html) return '';
-    const idx = html.search(headingRegex);
-    if (idx < 0) return '';
-    const after = html.slice(idx);
-    const next = after.indexOf('<h3');
-    const chunk = next > 0 ? after.slice(0, next) : after;
-    return chunk.replace(/^[\s\S]*?<\/h3>/i, '').trim();
   }
 
   function renderOfficialSummaryToStatic(summary) {
@@ -468,7 +444,7 @@ window.addEventListener('DOMContentLoaded', () => {
       const z = summary.gpu.zones || [];
       const items = z.length
         ? z.map(item => `<li>${escapeHtml(item.code || item.label || 'Zone')} <span class="small muted">×${item.count}</span></li>`).join('')
-        : '<li class="muted">Geen zone-urba polygonen aangetroffen (mogelijk RNU of alleen documenten).</li>';
+        : '<li class="muted">Geen zone-urba polygonen aangetroffen.</li>';
       parts.push(`<h3>PLU/SUP (GPU)</h3><div class="box"><ul>${items}</ul></div>`);
     }
     if (summary.dvf) {
@@ -491,16 +467,21 @@ window.addEventListener('DOMContentLoaded', () => {
     const addr = buildFullAddress(values);
     const today = new Date().toLocaleDateString('nl-NL');
 
-    const swotSection = extractSection(overviewHtml, /SWOT-matrix/i);
-    const actions     = extractSection(overviewHtml, /Actieplan/i);
-    const comms       = extractSection(overviewHtml, /Vragen & Communicatie/i);
+    const extract = (html, h3Text) => {
+      const rx = new RegExp(`<h3[^>]*>${h3Text}<\/h3>[\\s\\S]*?(?=<h3|$)`,'i');
+      const m = (html || '').match(rx);
+      return m ? m[0].replace(/^<h3[^>]*>[^<]*<\/h3>/i,'').trim() : '';
+    };
+
+    const swotSection = extract(overviewHtml, 'SWOT-matrix');
+    const actions     = extract(overviewHtml, 'Actieplan');
+    const comms       = extract(overviewHtml, 'Vragen & Communicatie');
     const omgeving    = renderOfficialSummaryToStatic(summary);
 
     const waarschuwing = `
-      <p><strong>Waarschuwing:</strong> voorkom een overhaaste “coup de cœur”, een term die makelaars graag gebruiken maar
-      die voor de koper risico’s kan inhouden: te snel en op emotie tot een aankoop komen. Weeg rustig af, bepaal de totale
-      acquisitiekosten (inclusief makelaars- en notariskosten) en plan verbouwingskosten realistisch in. Tip: de koper kan een
-      eigen notaris kiezen; de cumulatieve notariskosten blijven doorgaans gelijk.</p>
+      <p><strong>Waarschuwing:</strong> voorkom een overhaaste “coup de cœur”. Weeg rustig af, bepaal totale acquisitiekosten
+      (inclusief makelaars- en notariskosten) en plan verbouwingskosten realistisch in. Tip: de koper kan een eigen notaris
+      kiezen; de cumulatieve notariskosten blijven doorgaans gelijk.</p>
       <p class="small muted">Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële
       bronnen (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.</p>
     `;
@@ -508,26 +489,23 @@ window.addEventListener('DOMContentLoaded', () => {
     const style = `
       <style>
         :root { --brand:#800000; --ink:#222; --muted:#666; --ok:#0a7f00; --warn:#b00020; }
-        body { font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: var(--ink); margin: 2rem; }
-        .container { max-width: 780px; margin: 0 auto; }
-        h1 { font-size: 26px; margin: 0 0 4px; color: var(--brand); }
-        h2 { font-size: 18px; margin: 20px 0 6px; }
-        h3 { font-size: 16px; margin: 16px 0 6px; }
-        h4 { font-size: 14px; margin: 10px 0 6px; }
-        .muted { color: var(--muted); }
-        .small { font-size: 12px; }
-        .ok { color: var(--ok); }
-        .warn { color: var(--warn); }
-        .box { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
-        ul { margin: 6px 0 6px 20px; }
-        .badgelist { list-style: none; margin: 0; padding: 0; }
-        .badge { display: inline-block; width: 1.4em; text-align: center; margin-right: 6px; }
-        .hr { height: 1px; background: #ddd; margin: 24px 0; }
-        .swot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .swot-cell { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; }
-        .swot-cell.ok h4 { color: var(--ok); }
-        .swot-cell.warn h4 { color: var(--warn); }
-        @media print { a { color: inherit; text-decoration: none; } .hr { break-after: page; height:0; border:none; } }
+        body { font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; color:var(--ink); margin:2rem; }
+        .container { max-width:780px; margin:0 auto; }
+        h1{font-size:26px; margin:0 0 4px; color:var(--brand);}
+        h2{font-size:18px; margin:20px 0 6px;}
+        h3{font-size:16px; margin:16px 0 6px;}
+        h4{font-size:14px; margin:10px 0 6px;}
+        .muted{color:var(--muted);} .small{font-size:12px;}
+        .ok{color:var(--ok);} .warn{color:var(--warn);}
+        .box{border:1px solid #ddd; border-radius:6px; padding:10px 12px; margin:8px 0;}
+        ul{margin:6px 0 6px 20px;}
+        .badgelist{list-style:none; margin:0; padding:0;}
+        .badge{display:inline-block; width:1.4em; text-align:center; margin-right:6px;}
+        .hr{height:1px; background:#ddd; margin:24px 0;}
+        .swot-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+        .swot-cell{border:1px solid #ddd; border-radius:6px; padding:10px 12px;}
+        .swot-cell.ok h4{color:var(--ok);} .swot-cell.warn h4{color:var(--warn);}
+        @media print { a { color: inherit; text-decoration: none; } }
       </style>
     `;
 
@@ -559,9 +537,7 @@ window.addEventListener('DOMContentLoaded', () => {
   <div class="hr"></div>
 
   <h2>Bijlage A – SWOT-matrix</h2>
-  <div class="box">
-    ${swotSection || '<p class="muted">—</p>'}
-  </div>
+  <div class="box">${swotSection || '<p class="muted">—</p>'}</div>
 
   <div class="hr"></div>
 
@@ -570,9 +546,9 @@ window.addEventListener('DOMContentLoaded', () => {
 </div></body></html>`;
   }
 
-  // ===== Genereren (eind-tot-eind) =====
-  async function handleGenerate() {
-    const values = {
+  // ========== Input verzamelen ==========
+  function collectInput(){
+    return {
       adLink:   sanitize(adLinkEl?.value),
       city:     sanitize(cityEl?.value),
       price:    sanitize(priceEl?.value),
@@ -581,50 +557,107 @@ window.addEventListener('DOMContentLoaded', () => {
       number:   sanitize(numberEl?.value),
       adText:   sanitize(adTextEl?.value),
     };
-    if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
+  }
 
+  // ========== End-to-end genereren ==========
+  async function fetchSummarySequential(city, postcode) {
+    const combined = { ok:true, input:{ city, postcode } };
+
+    const comm = await fetchCommune(city, postcode);
+    if (!comm?.commune) return combined; // zonder INSEE heeft vervolg weinig zin
+    combined.commune = comm.commune; renderCommune(comm.commune);
+
+    const insee = combined.commune.insee;
+
+    const gr  = await fetchGeorisques(insee); if (gr)  { combined.georisques = gr; renderGeorisques(gr); }
+    const gpu = await fetchGPU(insee);        if (gpu) { combined.gpu = gpu; renderGPU(gpu); }
+    const gd  = await fetchGPUDoc(insee);     if (gd)  { combined.gpudoc = gd; renderGPUDoc(gd); }
+    const dvf = await fetchDVF(insee);        if (dvf) { combined.dvf = dvf; renderDVF(dvf); }
+
+    combined.meta = { insee, timestamp: new Date().toISOString() };
+    window.__lastSummary = combined;
+    return combined;
+  }
+
+  async function handleGenerate(thisRunId) {
+    clearLog();
     setSpinner('Dossier wordt opgebouwd…');
+
+    const values = collectInput();
+    if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); hideSpinner(); return; }
+
+    // Reset panels
+    dossierPanel?.removeAttribute('hidden');
+    overviewPanel?.setAttribute('hidden','');
+    letterPanel?.setAttribute('hidden','');
+    $('#official-data')?.replaceChildren();
+
     renderDossier(values);
-    const target = $('#official-data');
-    if (target) target.innerHTML = '';
 
-    // Stapsgewijs de officiële bronnen
+    // 1) Officiële bronnen
     const summary = await fetchSummarySequential(values.city, values.postcode);
+    if (thisRunId !== runId) return; // geannuleerd/nieuwe run gestart
 
-    // AI-analyse
+    // 2) Analyse
     setSpinner('Genereert AI-analyse…');
     overviewOut.innerHTML = `<div class="alert info">Analyse wordt gegenereerd…</div>`;
-    if (overviewPanel.hasAttribute('hidden')) overviewPanel.removeAttribute('hidden');
+    overviewPanel?.removeAttribute('hidden');
 
     const signals = buildSignals(values, summary || {});
     const dossierText = composeDossierText(values, summary || {});
+
     try {
-      const result = await postJson('/api/analyse', { dossier: dossierText, signals });
+      const result = await postJson('/api/analyse', { dossier: dossierText, signals }, 'Analyseert (Gemini)…');
+      if (thisRunId !== runId) return; // geannuleerd
       renderOverview(result);
       ensureExportButtonOnce();
     } catch (err) {
-      overviewOut.innerHTML = `<div class="alert error"><strong>Fout:</strong> ${escapeHtml(err.message)}${err.detail ? `<div class="small muted">${escapeHtml(err.detail)}</div>`:''}</div>`;
+      if (err?.name === 'AbortError') return; // netjes geannuleerd
+      overviewOut.innerHTML = `<div class="alert error"><strong>Fout tijdens AI-analyse:</strong> ${escapeHtml(err.message)}</div>`;
     } finally {
       hideSpinner();
     }
   }
 
-  // Lock tegen dubbelklikken
+  // ========== Annuleer-knop ==========
+  // Injecteer een kleine annuleerknop naast de primaire CTA (alleen als spinner getoond wordt)
+  let cancelBtn = null;
+  function ensureCancelButton() {
+    if (cancelBtn) return;
+    cancelBtn = document.createElement('button');
+    cancelBtn.id = 'btn-cancel';
+    cancelBtn.className = 'btn outline';
+    cancelBtn.textContent = 'Annuleer';
+    cancelBtn.addEventListener('click', () => {
+      appendLog('Gebruiker annuleert de huidige run');
+      resetActiveControllers();
+      runId++; // invalideer alle lopende promises
+      hideSpinner();
+    });
+    const actions = document.querySelector('.actions');
+    if (actions) actions.appendChild(cancelBtn);
+  }
+  ensureCancelButton();
+
+  // ========== Event handlers ==========
   let running = false;
   btnPrimary?.addEventListener('click', async () => {
     if (running) return;
     try {
       running = true;
+      runId++; // nieuwe run
+      resetActiveControllers();
       btnPrimary.classList.add('is-loading'); btnPrimary.disabled = true;
-      await handleGenerate();
+      ensureCancelButton();
+      await handleGenerate(runId);
     } finally {
       btnPrimary.classList.remove('is-loading'); btnPrimary.disabled = false;
       running = false;
     }
   });
 
-  // ===== Compose (berichten) =====
-  function getChannelFor(rec){ // rec: notary | agent | seller
+  // Compose (laten staan; werkt alleen na analyse)
+  function getChannelFor(rec){
     const group = document.querySelector(`.radio-row[data-recipient="${rec}"]`);
     const checked = group?.querySelector('input[type="radio"]:checked');
     return checked?.value || 'email';
@@ -633,29 +666,19 @@ window.addEventListener('DOMContentLoaded', () => {
     const sel = document.querySelector(`#lang-${rec}`);
     return sel?.value || 'nl';
   }
-
-  function onCompose(role, rec){ // rec: notary|agent|seller
+  function onCompose(role, rec){
     return async () => {
-      const values = {
-        adLink:   sanitize(adLinkEl?.value),
-        city:     sanitize(cityEl?.value),
-        price:    sanitize(priceEl?.value),
-        postcode: sanitize(postcodeEl?.value),
-        street:   sanitize(streetEl?.value),
-        number:   sanitize(numberEl?.value),
-        adText:   sanitize(adTextEl?.value),
-      };
+      const values = collectInput();
       if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
-
       const channel  = getChannelFor(rec);
       const language = getLanguageFor(rec);
-      const summary  = window.__lastSummary || await fetchSummarySequential(values.city, values.postcode);
-      const dossierText = `Language: ${language}\nRecipient: ${rec}\n\n` + composeDossierText(values, summary || {});
+      const summary  = window.__lastSummary || null;
+      const dossierText = `Language: ${language}\nRecipient: ${rec}\n\n${composeDossierText(values, summary || {})}`;
 
       try {
         letterOut.innerHTML = `<div class="alert info">Bericht wordt gegenereerd…</div>`;
-        if (letterPanel.hasAttribute('hidden')) letterPanel.removeAttribute('hidden');
-        const result = await postJson('/api/compose', { role, dossier: dossierText, channel, language });
+        letterPanel?.removeAttribute('hidden');
+        const result = await postJson('/api/compose', { role, dossier: dossierText, channel, language }, 'Stelt bericht op…');
         const txt = result?.output?.letter_text || '';
         const throttle = result?.throttleNotice;
         letterOut.innerHTML = `
@@ -666,11 +689,14 @@ window.addEventListener('DOMContentLoaded', () => {
         letterPanel.scrollIntoView({ behavior:'smooth', block:'start' });
       } catch (err) {
         letterOut.innerHTML = `<div class="alert error"><strong>Fout:</strong> ${escapeHtml(err.message)}</div>`;
-        letterPanel.scrollIntoView({ behavior:'smooth', block:'start' });
       }
     };
   }
   btnNotary?.addEventListener('click', onCompose('notary-fr','notary'));
   btnAgent ?.addEventListener('click', onCompose('agent-nl','agent'));
   btnSeller?.addEventListener('click', onCompose('seller-mixed','seller'));
+
+  // ========== Defensieve logging ==========
+  window.addEventListener('error', (e) => appendLog(`JS-error: ${e.message || e.type}`));
+  window.addEventListener('unhandledrejection', (e) => appendLog(`Promise-reject: ${(e.reason && e.reason.message) || String(e.reason)}`));
 });
