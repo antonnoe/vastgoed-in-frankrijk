@@ -1,9 +1,9 @@
 // /public/script.js
 // Client-UI voor Immodiagnostique.
-// - Alle externe data gaat via eigen /api/* routes (nooit direct vanaf de browser).
-// - Ondersteunt: dossier-UI, AI-analyse (/api/analyse), AI-berichten (/api/compose),
-//   en officiële bronnen via één keten-call (/api/summary).
-// - Dynamische CTA-teksten o.b.v. gekozen contactkanaal (email/pb/phone/letter).
+// - Geen externe fetches vanuit de browser: alleen naar eigen /api/*.
+// - Werkt ook zonder advertentiegegevens; "Plaatsnaam" is nu de enige hard requirement.
+// - /api/summary wordt gebruikt voor promptverrijking en voor het "Officiële gegevens"-blok.
+// - Export: print-vriendelijke HTML (H1/H2, nette tekst), via window.print().
 
 (() => {
   // ---------- Elementen ----------
@@ -12,28 +12,27 @@
   // Invoer
   const adLinkEl   = $('#adLink');
   const cityEl     = $('#city');
-  const priceEl    = $('#price');        // verplicht
+  const priceEl    = $('#price');        // optioneel (was verplicht)
   const postcodeEl = $('#postcode');
   const streetEl   = $('#street');
   const numberEl   = $('#number');
   const adTextEl   = $('#adText');
 
-  // Actieknoppen (bestaand)
+  // Actieknoppen
   const btnGenerate   = $('#btn-generate');
   const btnMakePrompt = $('#btn-make-prompt');
 
-  // Dynamisch toe te voegen knop: “Haal gegevens op”
-  let btnFetch = $('#btn-fetch'); // mocht in HTML bestaan; anders maken we ‘m
+  // Dynamisch toegevoegde knoppen
+  let btnFetch  = $('#btn-fetch');  // “Haal gegevens op” (bestaat mogelijk al)
+  let btnExport = $('#btn-export'); // “Exporteer rapport (PDF/print)”
 
   // Panels/uitvoer
-  const dossierPanel = $('#dossier-panel');
-  const dossierOut   = $('#dossier-output');
-
-  const overviewPanel = $('#overview-panel');
-  const overviewOut   = $('#overview-output');
-
-  const letterPanel = $('#letter-panel');
-  const letterOut   = $('#letter-output');
+  const dossierPanel   = $('#dossier-panel');
+  const dossierOut     = $('#dossier-output');
+  const overviewPanel  = $('#overview-panel');
+  const overviewOut    = $('#overview-output');
+  const letterPanel    = $('#letter-panel');
+  const letterOut      = $('#letter-output');
 
   // Compose CTA’s
   const btnNotary = $('#btn-notary');
@@ -55,6 +54,7 @@
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[ch]));
   }
+  function escapeAttr(v) { return escapeHtml(String(v || '')); }
 
   function buildFullAddress({ number, street, postcode, city }) {
     const parts = [];
@@ -78,11 +78,11 @@
     };
   }
 
-  function composeDossierText(values) {
+  function composeDossierText(values, summaryData) {
     const { adLink, city, price, postcode, street, number, adText } = values;
     const fullAddr = buildFullAddress({ number, street, postcode, city });
-
     const route = (street || number || postcode) ? 'Route B (adres bekend)' : 'Route A (geen adres)';
+
     const lines = [];
     lines.push(`[${route}]`);
     lines.push("");
@@ -91,6 +91,25 @@
     if (price) lines.push(`Vraagprijs: ${price}`);
     if (adLink) lines.push(`Advertentielink: ${adLink}`);
     lines.push("Exact perceelnummer later via notaris opvragen.");
+    lines.push("");
+
+    // Verrijking uit summary (compact)
+    if (summaryData?.commune) {
+      lines.push(`Gemeente: ${summaryData.commune.name} (INSEE ${summaryData.commune.insee}, dep. ${summaryData.commune.department?.code || '-'})`);
+    }
+    if (summaryData?.georisques) {
+      const hits = (summaryData.georisques.summary || []).filter(s => s.present).map(s => s.label);
+      lines.push(`Géorisques: ${hits.length ? hits.join(', ') : 'geen expliciete categorieën gevonden'}`);
+    }
+    if (summaryData?.gpu) {
+      const z = summaryData.gpu.zones || [];
+      lines.push(`PLU (zone-urba): ${z.length ? `${z.length} zones` : 'geen polygonen gevonden'}`);
+    }
+    if (summaryData?.dvf?.summary?.total) {
+      const tot = summaryData.dvf.summary.total;
+      lines.push(`DVF (indicatief): transacties=${tot.count}, mediaan prijs≈${fmtMoney(tot.median_price)}, mediaan €/m²≈${fmtMoney(tot.median_eur_m2)}`);
+    }
+
     lines.push("");
     lines.push("2) Risico's (Géorisques)");
     lines.push(`Controleer risico's voor: ${city || '—'}.`);
@@ -151,19 +170,25 @@
   }
 
   function renderOverviewFromApi(out, meta, model, throttleNotice) {
-    const flagHtml = mdListToHtml(out.red_flags);
-    const actHtml  = mdListToHtml(out.actions);
-    const qHtml    = mdListToHtml(out.questions);
+    const zwakHtml  = mdListToHtml(out.red_flags);   // "Rode vlaggen" → "ZWAKTEN"
+    const actHtml   = mdListToHtml(out.actions);
+    const vrgHtml   = mdListToHtml(out.questions);
 
     overviewOut.innerHTML = `
       ${throttleNotice ? `<div class="alert warn">Throttling door Gemini; backoff toegepast. (${escapeHtml(throttleNotice)})</div>` : ''}
       <div class="kv tiny muted">Model: <code>${escapeHtml(model || '')}</code> · ${meta?.timestamp ? new Date(meta.timestamp).toLocaleString() : ''}</div>
-      <h3>1. Rode vlaggen</h3>
-      ${flagHtml || '<p class="muted">—</p>'}
-      <h3>2. Wat nu regelen</h3>
+
+      <h3>SWOT – STERKTEN</h3>
+      <p class="muted">Niet automatisch vastgesteld. Vul aan op basis van advertentietekst, ligging, staat en voorzieningen.</p>
+
+      <h3>SWOT – <span class="zwak">ZWAKTEN</span></h3>
+      ${zwakHtml || '<p class="muted">—</p>'}
+
+      <h3>Vragen & Communicatie</h3>
+      ${vrgHtml || '<p class="muted">—</p>'}
+
+      <h3>Actieplan</h3>
       ${actHtml || '<p class="muted">—</p>'}
-      <h3>3. Vragen aan verkoper, notaris en makelaar</h3>
-      ${qHtml || '<p class="muted">—</p>'}
     `;
     smoothReveal(overviewPanel);
   }
@@ -202,18 +227,19 @@
       `);
     }
 
-    // Géorisques
+    // Géorisques → badges
     if (summary?.georisques) {
       const gr = summary.georisques;
       const items = (gr.summary || []).map(s => {
-        const badge = s.present ? 'ja' : 'nee';
-        return `<li><span class="${s.present ? 'ok' : 'muted'}">${escapeHtml(s.label)}</span> — ${badge}</li>`;
+        const badge = s.present ? '✅' : '—';
+        const cls = s.present ? 'ok' : 'muted';
+        return `<li><span class="badge ${cls}">${badge}</span> ${escapeHtml(s.label)}</li>`;
       }).join('') || '<li class="muted">Geen categorieën gevonden</li>';
       parts.push(`
         <section>
           <h4>Géorisques</h4>
           <div class="box">
-            <ul>${items}</ul>
+            <ul class="badgelist">${items}</ul>
             <div class="tiny"><a href="${escapeAttr(gr.links?.commune)}" target="_blank" rel="noopener">Open Géorisques (commune)</a></div>
           </div>
         </section>
@@ -224,8 +250,8 @@
     if (summary?.gpu) {
       const z = summary.gpu.zones || [];
       const items = z.length
-        ? z.map(item => `<li>${escapeHtml(item.code || item.label || 'Zone')} — <span class="tiny muted">x${item.count}</span></li>`).join('')
-        : '<li class="muted">Geen zone-urba polygonen gevonden</li>';
+        ? z.map(item => `<li>${escapeHtml(item.code || item.label || 'Zone')} <span class="tiny muted">×${item.count}</span></li>`).join('')
+        : '<li class="muted">Geen zone-urba polygonen aangetroffen (mogelijk RNU of alleen documenten).</li>';
       parts.push(`
         <section>
           <h4>Géoportail Urbanisme (PLU/SUP)</h4>
@@ -248,7 +274,7 @@
             const date = d.date ? `<span class="tiny muted"> (${escapeHtml(d.date)})</span>` : '';
             return `<li><a href="${escapeAttr(d.url)}" target="_blank" rel="noopener">${escapeHtml(t || 'Document')}</a>${date}</li>`;
           }).join('')
-        : '<li class="muted">Geen documenten via API gevonden</li>';
+        : '<li class="muted">Geen documenten via API gevonden.</li>';
 
       parts.push(`
         <section>
@@ -289,6 +315,9 @@
       `);
     }
 
+    // Export mount
+    parts.push(`<div id="export-hint" class="tiny muted">Gebruik “Exporteer rapport” voor een net PDF/print-overzicht.</div>`);
+
     mount.innerHTML = parts.join('\n');
   }
 
@@ -304,10 +333,6 @@
     const items = lines.filter(l => /^[-*]\s+/.test(l)).map(l => l.replace(/^[-*]\s+/, ''));
     if (!items.length) return text ? `<p>${escapeHtml(text)}</p>` : '';
     return `<ul>${items.map(li => `<li>${escapeHtml(li)}</li>`).join('')}</ul>`;
-  }
-
-  function escapeAttr(v) {
-    return escapeHtml(String(v || ''));
   }
 
   // ---------- Dynamische CTA-teksten ----------
@@ -389,16 +414,17 @@
   btnGenerate?.addEventListener('click', withLock(btnGenerate, async () => {
     const values = collectInput();
     if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
-    if (!values.price) { alert('Vraagprijs is verplicht.'); priceEl?.focus(); return; }
     renderDossier(values);
   }));
 
   btnMakePrompt?.addEventListener('click', withLock(btnMakePrompt, async () => {
     const values = collectInput();
     if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
-    if (!values.price) { alert('Vraagprijs is verplicht.'); priceEl?.focus(); return; }
 
-    const dossierText = composeDossierText(values);
+    // Haal officiële samenvatting ter verrijking
+    const summary = await fetchSummary(values.city, values.postcode);
+
+    const dossierText = composeDossierText(values, summary);
 
     try {
       overviewOut.innerHTML = `<div class="alert info">Analyse wordt gegenereerd…</div>`;
@@ -416,15 +442,32 @@
     }
   }));
 
+  async function fetchSummary(city, postcode) {
+    try {
+      const qs = new URLSearchParams();
+      if (city) qs.set('city', city);
+      if (postcode) qs.set('postcode', postcode);
+      const res = await fetch(`/api/summary?${qs.toString()}`, { headers: { 'Accept': 'application/json' } });
+      const isJson = (res.headers.get('content-type') || '').includes('application/json');
+      const data = isJson ? await res.json() : null;
+      if (!res.ok || !data?.ok) return null;
+      // Render (of update) officiële gegevens in dossierpaneel
+      renderOfficialSummary(data);
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
   // ---------- Handlers: compose ----------
   function onCompose(role) {
     const btn = role === 'notary-fr' ? btnNotary : role === 'agent-nl' ? btnAgent : btnSeller;
     return withLock(btn, async () => {
       const values = collectInput();
       if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
-      if (!values.price) { alert('Vraagprijs is verplicht.'); priceEl?.focus(); return; }
 
-      const dossierText = composeDossierText(values);
+      const summary = await fetchSummary(values.city, values.postcode);
+      const dossierText = composeDossierText(values, summary);
       const channel = values.channel;
 
       try {
@@ -448,14 +491,12 @@
   btnSeller?.addEventListener('click', onCompose('seller-mixed'));
 
   // ---------- Handler: officiële bronnen via /api/summary ----------
-  // Knop toevoegen als hij niet in de HTML staat
   (function ensureFetchButton() {
     if (!btnFetch) {
       btnFetch = document.createElement('button');
       btnFetch.id = 'btn-fetch';
       btnFetch.className = 'btn';
       btnFetch.textContent = 'Haal gegevens op';
-      // Plaats ‘m logisch naast “Maak AI-prompt”
       const ref = btnMakePrompt || btnGenerate || document.body;
       ref.parentNode?.insertBefore(btnFetch, ref.nextSibling);
     }
@@ -463,7 +504,7 @@
       const values = collectInput();
       if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
 
-      // Render (of update) basis-dossier zodat er een mountpunt is
+      // Basis-dossier tonen zodat er een mountpunt is
       renderDossier(values);
 
       const target = $('#official-data');
@@ -471,23 +512,224 @@
         target.innerHTML = `<div class="alert info">Officiële gegevens worden opgehaald…</div>`;
       }
 
-      try {
-        const qs = new URLSearchParams();
-        if (values.city) qs.set('city', values.city);
-        if (values.postcode) qs.set('postcode', values.postcode);
-        const res = await fetch(`/api/summary?${qs.toString()}`, { headers: { 'Accept': 'application/json' } });
-        const isJson = (res.headers.get('content-type') || '').includes('application/json');
-        const data = isJson ? await res.json() : await res.text();
+      await fetchSummary(values.city, values.postcode);
+    }));
+  })();
 
-        if (!res.ok || !data?.ok) {
-          const msg = isJson ? (data?.error || 'Kon officiële gegevens niet ophalen.') : `HTTP ${res.status}`;
-          showError('dossier', msg, isJson ? JSON.stringify(data) : String(data));
-          return;
+  // ---------- Export: rapport (PDF/print) ----------
+  (function ensureExportButton() {
+    if (!btnExport) {
+      btnExport = document.createElement('button');
+      btnExport.id = 'btn-export';
+      btnExport.className = 'btn';
+      btnExport.textContent = 'Exporteer rapport (PDF/print)';
+      const ref = (btnFetch || btnMakePrompt || btnGenerate || document.body);
+      ref.parentNode?.insertBefore(btnExport, ref.nextSibling);
+    }
+    btnExport.addEventListener('click', () => {
+      const values = collectInput();
+      const summary = window.__lastSummary || null; // gevuld door fetchSummary
+      const overviewHtml = overviewOut.innerHTML || '';
+      const letterHtml = letterOut.innerHTML || '';
+
+      const html = buildPrintableReport(values, summary, overviewHtml, letterHtml);
+      const w = window.open('', '_blank');
+      if (!w) return alert('Pop-up geblokkeerd: sta pop-ups tijdelijk toe voor export.');
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      w.focus();
+      // Automatisch printen; gebruiker kan "Opslaan als PDF" kiezen
+      w.print();
+    });
+  })();
+
+  function buildPrintableReport(values, summary, overviewHtml, letterHtml) {
+    const title = 'IMMODIAGNOSTIQUE – Rapport';
+    const addr = buildFullAddress(values);
+    const today = new Date().toLocaleDateString('nl-NL');
+
+    // Extract “ZWAKTEN” lijst uit overviewHtml (rudimentair, maar werkt omdat we de structuur kennen)
+    const zwakten = extractSectionHtml(overviewHtml, /SWOT – <span class="zwak">ZWAKTEN<\/span>/i);
+    const vragen  = extractSectionAfterHeading(overviewHtml, /Vragen & Communicatie/i);
+    const acties  = extractSectionAfterHeading(overviewHtml, /Actieplan/i);
+
+    // Omgevingsdossier – korte synthese van summary
+    const omgeving = renderOfficialSummaryToStatic(summary);
+
+    // Waarschuwing + disclaimer
+    const waarschuwing = `
+      <p><strong>Waarschuwing:</strong> laat u niet meeslepen door een “coup de cœur”. Weeg rustig af. Stel de totale acquisitiekosten <strong>volledig</strong> vast (inclusief eventuele makelaarskosten en notariskosten) en plan verbouwingskosten realistisch in.</p>
+      <p class="tiny muted">Tip: als koper kunt u <em>zelf</em> een notaris inschakelen; de cumulatieve notariskosten blijven in de praktijk gelijk.</p>
+      <p class="tiny muted">Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.</p>
+    `;
+
+    const style = `
+      <style>
+        :root { --brand:#800000; --ink:#222; --muted:#666; --ok:#0a7f00; --warn:#b00020; max-width: 100%; }
+        body { font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color: var(--ink); margin: 2rem; }
+        .container { max-width: 780px; margin: 0 auto; }
+        h1 { font-size: 26px; margin: 0 0 4px; color: var(--brand); }
+        h2 { font-size: 18px; margin: 20px 0 6px; }
+        h3 { font-size: 16px; margin: 16px 0 6px; }
+        h4 { font-size: 14px; margin: 10px 0 6px; }
+        .muted { color: var(--muted); }
+        .tiny { font-size: 12px; }
+        .zwak { color: var(--warn); }
+        .ok { color: var(--ok); }
+        .box { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
+        ul { margin: 6px 0 6px 20px; }
+        .badgelist { list-style: none; margin-left: 0; padding-left: 0; }
+        .badgelist li { margin: 2px 0; }
+        .badge { display: inline-block; width: 1.4em; text-align: center; margin-right: 6px; }
+        code { background: #f6f6f6; padding: 0 3px; border-radius: 3px; }
+        .hr { height: 1px; background: #ddd; margin: 24px 0; }
+        @media print {
+          .hr { break-after: page; height: 0; border: none; }
+          a { color: inherit; text-decoration: none; }
         }
-        renderOfficialSummary(data);
-      } catch (err) {
-        showError('dossier', err.message, err.stack);
+      </style>
+    `;
+
+    return `
+<!DOCTYPE html>
+<html lang="nl"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>${style}</head>
+<body><div class="container">
+  <h1>IMMODIAGNOSTIQUE – Rapport</h1>
+  <div class="tiny muted">Datum: ${escapeHtml(today)}</div>
+  <div class="hr"></div>
+
+  <h2>1. Vastgoeddossier</h2>
+  <div class="box">
+    <div><strong>Adres/advertentie:</strong> ${escapeHtml(addr)}</div>
+    ${values.price ? `<div><strong>Vraagprijs:</strong> ${escapeHtml(values.price)}</div>` : ``}
+    ${values.adLink ? `<div><strong>Advertentielink:</strong> <code>${escapeHtml(values.adLink)}</code></div>` : ``}
+    <div class="tiny muted">Exact perceelnummer later bij de notaris opvragen.</div>
+  </div>
+
+  <h3>SWOT – STERKTEN</h3>
+  <div class="box"><p class="muted">Nog in te vullen (op basis van advertentie/bezichtiging/omgeving).</p></div>
+
+  <h3>SWOT – <span class="zwak">ZWAKTEN</span></h3>
+  <div class="box">${zwakten || '<p class="muted">—</p>'}</div>
+
+  <div class="hr"></div>
+
+  <h2>2. Omgevingsdossier (ook SWOT)</h2>
+  ${omgeving}
+
+  <div class="hr"></div>
+
+  <h2>3. Actieplan</h2>
+  <div class="box">${acties || '<p class="muted">—</p>'}</div>
+
+  <h3>Communicatie & Vragen</h3>
+  <div class="box">
+    ${vragen || '<p class="muted">—</p>'}
+    <p class="tiny muted">Gebruik de sjablonen in de app voor verkoper/makelaar/notaris (kanaal: e-mail, PB/DM, of belscript).</p>
+  </div>
+
+  <div class="hr"></div>
+
+  <h2>Waarschuwing & Disclaimer</h2>
+  <div class="box">${waarschuwing}</div>
+</div></body></html>`;
+  }
+
+  // Zeer simpele extractors op basis van headings die we zelf renderen
+  function extractSectionHtml(html, headingRegex) {
+    if (!html) return '';
+    // Zoek <h3>SWOT – <span class="zwak">ZWAKTEN</span></h3> en pak erna tot volgende <h3>
+    const idx = html.search(headingRegex);
+    if (idx < 0) return '';
+    const after = html.slice(idx);
+    const next = after.indexOf('<h3');
+    const chunk = next > 0 ? after.slice(0, next) : after;
+    // strip de heading zelf
+    return chunk.replace(/^[\s\S]*?<\/h3>/i, '');
+  }
+  function extractSectionAfterHeading(html, headingRegex) {
+    if (!html) return '';
+    const idx = html.search(headingRegex);
+    if (idx < 0) return '';
+    const after = html.slice(idx);
+    const next = after.indexOf('<h3');
+    const chunk = next > 0 ? after.slice(0, next) : after;
+    return chunk.replace(/^[\s\S]*?<\/h3>/i, '');
+  }
+
+  function renderOfficialSummaryToStatic(summary) {
+    if (!summary) return `<div class="box"><p class="muted">Geen officiële gegevens opgehaald.</p></div>`;
+
+    const parts = [];
+    if (summary.commune) {
+      parts.push(`
+        <h3>Gemeente</h3>
+        <div class="box">
+          <div><strong>${escapeHtml(summary.commune.name)}</strong> (INSEE ${escapeHtml(summary.commune.insee)})</div>
+          <div class="tiny muted">Departement: ${escapeHtml(summary.commune.department?.name || '')} (${escapeHtml(summary.commune.department?.code || '')})</div>
+        </div>
+      `);
+    }
+    // Géorisques badges
+    if (summary.georisques) {
+      const items = (summary.georisques.summary || []).map(s => {
+        const badge = s.present ? '✅' : '—'; const cls = s.present ? 'ok' : 'muted';
+        return `<li><span class="badge ${cls}">${badge}</span> ${escapeHtml(s.label)}</li>`;
+      }).join('') || '<li class="muted">Geen categorieën gevonden</li>';
+      parts.push(`
+        <h3>Géorisques</h3>
+        <div class="box"><ul class="badgelist">${items}</ul></div>
+      `);
+    }
+    // GPU zones
+    if (summary.gpu) {
+      const z = summary.gpu.zones || [];
+      const items = z.length
+        ? z.map(item => `<li>${escapeHtml(item.code || item.label || 'Zone')} <span class="tiny muted">×${item.count}</span></li>`).join('')
+        : '<li class="muted">Geen zone-urba polygonen aangetroffen (mogelijk RNU of alleen documenten).</li>';
+      parts.push(`
+        <h3>PLU/SUP (GPU)</h3>
+        <div class="box"><ul>${items}</ul></div>
+      `);
+    }
+    // DVF
+    if (summary.dvf) {
+      let inner = '<li class="muted">Geen samenvatting (gebruik Etalab/DVF-links).</li>';
+      if (summary.dvf.summary?.total) {
+        const t = summary.dvf.summary.total;
+        inner = `
+          <li>Totaal transacties: <strong>${escapeHtml(String(t.count))}</strong></li>
+          <li>Mediaan prijs: <strong>${fmtMoney(t.median_price)}</strong></li>
+          <li>Mediaan €/m²: <strong>${fmtMoney(t.median_eur_m2)}</strong></li>
+        `;
       }
+      parts.push(`
+        <h3>DVF (verkoopprijzen)</h3>
+        <div class="box"><ul>${inner}</ul></div>
+      `);
+    }
+    return parts.join('\n');
+  }
+
+  // ---------- Officiële bronnen knop ----------
+  (function ensureFetchButton() {
+    if (!btnFetch) {
+      btnFetch = document.createElement('button');
+      btnFetch.id = 'btn-fetch';
+      btnFetch.className = 'btn';
+      btnFetch.textContent = 'Haal gegevens op';
+      const ref = btnMakePrompt || btnGenerate || document.body;
+      ref.parentNode?.insertBefore(btnFetch, ref.nextSibling);
+    }
+    btnFetch.addEventListener('click', withLock(btnFetch, async () => {
+      const values = collectInput();
+      if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
+      renderDossier(values);
+      const target = $('#official-data');
+      if (target) target.innerHTML = `<div class="alert info">Officiële gegevens worden opgehaald…</div>`;
+      const data = await fetchSummary(values.city, values.postcode);
+      window.__lastSummary = data || null;
     }));
   })();
 
