@@ -1,12 +1,8 @@
 // /public/script.js
-// Immodiagnostique – UX-polish:
-// - Één primaire flow “Maak dossier” met voortgangsbalk (%)
-// - Communicatieknoppen en PDF-export verschijnen pas als het dossier volledig is gegenereerd
-// - Alle knoppen compact; styling via geïnjecteerde CSS (#800000 op knoppen, witte tekst)
-// - Coup-de-cœur waarschuwing/uitgebreide disclaimer: alleen in de PDF (op de pagina verborgen)
+// Immodiagnostique – UX-polish + PDF: waarschuwingstekst bijgewerkt (geen “coup de cœur”-paragraaf uit de UI)
+// - PDF bevat aangepaste waarschuwing (neutraler en met uitleg), UI bevat alleen korte disclaimer.
 
 window.addEventListener('DOMContentLoaded', () => {
-  // ---------- DOM helpers ----------
   const $  = (s) => document.querySelector(s);
   const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -19,18 +15,13 @@ window.addEventListener('DOMContentLoaded', () => {
   const numberEl   = $('#number');
   const adTextEl   = $('#adText');
 
-  // Acties/knoppen
-  const btnPrimary = $('#btn-generate'); // “Maak dossier”
-  const btnLegacy  = $('#btn-make-prompt'); // verbergen
-  let   btnExport  = $('#btn-export'); // wordt dynamisch getoond ná analyse
-
-  // Contact/compose
+  // Knoppen/panels
+  const btnPrimary = $('#btn-generate');
   const composeSection = document.querySelector('.compose');
   const btnNotary = $('#btn-notary');
   const btnAgent  = $('#btn-agent');
   const btnSeller = $('#btn-seller');
 
-  // Panels/uitvoer
   const dossierPanel  = $('#dossier-panel');
   const dossierOut    = $('#dossier-output');
   const overviewPanel = $('#overview-panel');
@@ -38,66 +29,49 @@ window.addEventListener('DOMContentLoaded', () => {
   const letterPanel   = $('#letter-panel');
   const letterOut     = $('#letter-output');
 
-  // Disclaimer alleen in PDF (op pagina verbergen)
-  const disclaimerSection = document.querySelector('.disclaimer');
-  if (disclaimerSection) disclaimerSection.style.display = 'none';
+  // Disclaimer op pagina laten staan (korte versie); geen extra blokken nodig
 
-  // Legacy knop verbergen
-  if (btnLegacy) btnLegacy.style.display = 'none';
-
-  // Compose-sectie verbergen tot analyse compleet is
+  // Compose pas tonen na analyse
   if (composeSection) composeSection.setAttribute('hidden', '');
 
-  // Exportknop verbergen/aanmaken pas na analyse
-  if (btnExport) {
-    btnExport.remove(); // verwijder als er nog eentje in DOM stond
-    btnExport = null;
+  // Styling injectie (knoppen/progress etc.)
+  if (!document.querySelector('style[data-ux]')) {
+    const style = document.createElement('style');
+    style.setAttribute('data-ux','1');
+    style.textContent = `
+      :root { --brand: #800000; --ink:#222; --muted:#666; --ok:#0a7f00; --warn:#b00020; }
+      .btn{ background: var(--brand); color:#fff; border:0; border-radius:8px; padding:10px 14px; cursor:pointer; font-weight:700; }
+      .btn.is-loading{ opacity:.75; pointer-events:none; }
+      .btn.btn-primary{ padding:12px 18px; font-size:15px; }
+      .compose-row .btn{ padding:8px 10px; font-weight:600; }
+      .progress { height: 10px; background:#eee; border-radius:999px; overflow:hidden; margin:10px 0; }
+      .progress-bar { height:100%; width:0%; background: var(--brand); transition: width .4s ease; }
+      .progress-wrap { display:none; }
+      .progress-wrap.active { display:block; }
+      .progress-label { font-size:12px; color: var(--muted); margin-top:4px; }
+      .swot-grid { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+      .swot-cell { border:1px solid #e6e6e6; border-radius:8px; padding:10px 12px; }
+      .swot-cell.ok h4{ color:#0a7f00; }
+      .swot-cell.warn h4{ color:#b00020; }
+      .badgelist { list-style:none; margin:0; padding:0; }
+      .badge { display:inline-block; width:1.4em; text-align:center; margin-right:6px; }
+      .muted { color:#666; } .tiny { font-size:12px; }
+      .spacer-lg{ height:16px; }
+      .alert.info{ border:1px solid #cfe3ff; background:#f4f8ff; padding:8px 10px; border-radius:6px; }
+      .alert.warn{ border:1px solid #ffe0a3; background:#fff8e6; padding:8px 10px; border-radius:6px; }
+      .alert.error{ border:1px solid #f3b5b5; background:#fff5f5; padding:8px 10px; border-radius:6px; }
+      .letter{ white-space: pre-wrap; }
+    `;
+    document.head.appendChild(style);
   }
 
-  // ---------- Styling injectie (knoppen & progress) ----------
-  const style = document.createElement('style');
-  style.textContent = `
-    :root { --brand: #800000; --ink:#222; --muted:#666; --ok:#0a7f00; --warn:#b00020; }
-    .btn{ background: var(--brand); color:#fff; border:0; border-radius:8px; padding:10px 14px; cursor:pointer; font-weight:600; }
-    .btn + .btn{ margin-left:8px; }
-    .btn.is-loading{ opacity:.75; pointer-events:none; }
-    .btn.btn-primary{ box-shadow: 0 1px 0 rgba(0,0,0,.08); }
-    .spacer-lg{ height: 16px; }
-    .swot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .swot-cell { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; }
-    .swot-cell.ok h4 { color: var(--ok); }
-    .swot-cell.warn h4 { color: var(--warn); }
-    .badgelist { list-style: none; margin: 0; padding: 0; }
-    .badge { display: inline-block; width: 1.4em; text-align: center; margin-right: 6px; }
-    .muted { color: var(--muted); }
-    .tiny { font-size: 12px; }
-    .alert.info { border:1px solid #cfe3ff; background:#f4f8ff; padding:8px 10px; border-radius:6px; }
-    .alert.warn { border:1px solid #ffe0a3; background:#fff8e6; padding:8px 10px; border-radius:6px; }
-    .alert.error{ border:1px solid #f3b5b5; background:#fff5f5; padding:8px 10px; border-radius:6px; }
-    .letter { white-space: pre-wrap; }
-    /* Voortgangsbalk */
-    .progress { height: 10px; background:#eee; border-radius:999px; overflow:hidden; margin:10px 0; }
-    .progress-bar { height:100%; width:0%; background: var(--brand); transition: width .4s ease; }
-    .progress-wrap { display:none; }
-    .progress-wrap.active { display:block; }
-    .progress-label { font-size:12px; color: var(--muted); margin-top:4px; }
-    /* Communicatieknoppen kleiner en met ademruimte */
-    .compose-row .btn{ padding:8px 10px; font-weight:600; }
-    .compose[hidden] { display:none !important; }
-    /* Ruimte tussen primaire CTA en compose */
-    .actions + .compose { margin-top: 18px; }
-  `;
-  document.head.appendChild(style);
-
-  // ---------- Voortgangsbalk ----------
-  // Wordt getoond tijdens “Maak dossier” en geüpdatet per stap
+  // Voortgangsbalk
   const progressWrap = document.createElement('div');
   progressWrap.className = 'progress-wrap';
   progressWrap.innerHTML = `
     <div class="progress"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
     <div class="progress-label" id="progress-label">Starten…</div>
   `;
-  // Plaats de voortgangsbalk direct onder de primaire actions (indien aanwezig)
   const actionsSection = document.querySelector('.actions');
   if (actionsSection) {
     actionsSection.insertAdjacentElement('afterend', progressWrap);
@@ -107,7 +81,6 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   const progressBar   = $('#progress-bar');
   const progressLabel = $('#progress-label');
-
   function setProgress(pct, label){
     if (progressBar) progressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
     if (progressLabel) progressLabel.textContent = label || '';
@@ -115,15 +88,12 @@ window.addEventListener('DOMContentLoaded', () => {
   function showProgress(){ progressWrap.classList.add('active'); setProgress(5, 'Bezig met starten…'); }
   function hideProgress(){ progressWrap.classList.remove('active'); }
 
-  // ---------- Utilities ----------
+  // Utils
   const sanitize = (s) => String(s || '').trim();
   const getChannel = () => (document.querySelector('input[name="channel"]:checked')?.value) || 'email';
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-  function escapeHtml(str = '') {
-    return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  }
-  function escapeAttr(v) { return escapeHtml(String(v || '')); }
+  const escapeHtml = (str='') => str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);
+  const escapeAttr = (v) => escapeHtml(String(v || ''));
+  const fmtMoney = (n) => (n==null||n==='') ? '—' : new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(Number(n));
 
   function buildFullAddress({ number, street, postcode, city }) {
     const parts = [];
@@ -152,19 +122,12 @@ window.addEventListener('DOMContentLoaded', () => {
     panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  function fmtMoney(n) {
-    if (n == null || n === '') return '—';
-    try {
-      return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(Number(n));
-    } catch { return String(n); }
-  }
-
-  // ---------- Render basis-dossier ----------
+  // Render basis-dossier
   function renderDossier(values) {
     const { adLink, city, price } = values;
     const fullAddr = buildFullAddress(values);
 
-    dossierOut.innerHTML = `
+    $('#dossier-output').innerHTML = `
       <ol class="checklist">
         <li>
           <strong>1. Officieel adres / advertentie</strong>
@@ -200,22 +163,18 @@ window.addEventListener('DOMContentLoaded', () => {
     smoothReveal(dossierPanel);
   }
 
-  // ---------- Officiële bronnen ----------
   async function fetchSummary(city, postcode) {
     try {
       const qs = new URLSearchParams();
       if (city) qs.set('city', city);
       if (postcode) qs.set('postcode', postcode);
       const res = await fetch(`/api/summary?${qs.toString()}`, { headers: { 'Accept': 'application/json' } });
-      const isJson = (res.headers.get('content-type') || '').includes('application/json');
-      const data = isJson ? await res.json() : null;
+      const data = (res.headers.get('content-type')||'').includes('application/json') ? await res.json() : null;
       if (!res.ok || !data?.ok) return null;
       renderOfficialSummary(data);
       window.__lastSummary = data;
       return data;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }
 
   function renderOfficialSummary(summary) {
@@ -224,7 +183,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
     const parts = [];
 
-    // Commune/INSEE
     if (summary?.commune) {
       const c = summary.commune;
       parts.push(`
@@ -238,7 +196,6 @@ window.addEventListener('DOMContentLoaded', () => {
       `);
     }
 
-    // Géorisques → badges
     if (summary?.georisques) {
       const gr = summary.georisques;
       const items = (gr.summary || []).map(s => {
@@ -257,7 +214,6 @@ window.addEventListener('DOMContentLoaded', () => {
       `);
     }
 
-    // GPU (zones)
     if (summary?.gpu) {
       const z = summary.gpu.zones || [];
       const items = z.length
@@ -276,7 +232,6 @@ window.addEventListener('DOMContentLoaded', () => {
       `);
     }
 
-    // GPU documenten
     if (summary?.gpudoc) {
       const docs = summary.gpudoc.documents || [];
       const items = docs.length
@@ -300,7 +255,6 @@ window.addEventListener('DOMContentLoaded', () => {
       `);
     }
 
-    // DVF
     if (summary?.dvf) {
       const dvf = summary.dvf;
       let inner = '<li class="muted">Geen samenvatting beschikbaar (gebruik links)</li>';
@@ -315,51 +269,43 @@ window.addEventListener('DOMContentLoaded', () => {
       parts.push(`
         <section>
           <h4>DVF (verkoopprijzen)</h4>
-          <div class="box">
-            <ul>${inner}</ul>
-            <div class="tiny">
-              <a href="${escapeAttr(dvf.links?.etalab_app)}" target="_blank" rel="noopener">Open Etalab DVF</a>
-              ${dvf.links?.data_gouv_dep_csv ? ` · <a href="${escapeAttr(dvf.links.data_gouv_dep_csv)}" target="_blank" rel="noopener">Departement CSV</a>` : ''}
-            </div>
+        <div class="box">
+          <ul>${inner}</ul>
+          <div class="tiny">
+            <a href="${escapeAttr(dvf.links?.etalab_app)}" target="_blank" rel="noopener">Open Etalab DVF</a>
+            ${dvf.links?.data_gouv_dep_csv ? ` · <a href="${escapeAttr(dvf.links.data_gouv_dep_csv)}" target="_blank" rel="noopener">Departement CSV</a>` : ''}
           </div>
-        </section>
-      `);
+        </div>
+      </section>`);
     }
 
     mount.innerHTML = parts.join('\n');
   }
 
-  // ---------- Signals bouwen ----------
   function buildSignals(values, summary) {
     const s = {};
     if (values.price && !Number.isNaN(Number(values.price))) s.price = Number(values.price);
-
-    if (summary?.dvf?.summary?.total?.median_price) {
-      s.dvf = { median_price: Number(summary.dvf.summary.total.median_price) };
-    }
-
+    if (summary?.dvf?.summary?.total?.median_price) s.dvf = { median_price: Number(summary.dvf.summary.total.median_price) };
     if (summary?.georisques?.summary) {
       const flags = {};
       for (const item of summary.georisques.summary) flags[item.key] = !!item.present;
       s.georisques = flags;
     }
-
     if (values.adText) {
       const lower = values.adText.toLowerCase();
       const kw = [];
       const pushIf = (re, label) => { if (re.test(lower)) kw.push(label); };
       pushIf(/\b(dpe|étiquette|classe)\b.*\b(a|b|c)\b/, 'dpe A–C');
       pushIf(/\btriple vitrage\b|\bhr\+\+\b|\bdouble vitrage\b/, 'dubbel/triple glas');
-      pushIf(/\bisolati(e|on)\b|\btoit isolé\b|\bisolation\b/, 'isolatie');
-      pushIf(/\bpompe à chaleur\b|\bheat pump\b/, 'warmtepomp');
-      pushIf(/\bà rénover\b|\btravaux\b|\bto renovate\b/, 'renovatie/werk');
+      pushIf(/\bisolati(e|on)|toit isolé|isolation\b/, 'isolatie');
+      pushIf(/\bpompe à chaleur\b|heat pump\b/, 'warmtepomp');
+      pushIf(/\bà rénover\b|travaux|to renovate\b/, 'renovatie/werk');
       if (kw.length) s.dpe = { hints: kw };
       s.advertentie = { keywords: kw };
     }
     return s;
   }
 
-  // ---------- Analyse aanroepen ----------
   async function postJson(url, payload) {
     const res = await fetch(url, {
       method: 'POST',
@@ -367,12 +313,11 @@ window.addEventListener('DOMContentLoaded', () => {
       body: JSON.stringify(payload),
     });
     const ct = res.headers.get('content-type') || '';
-    const isJson = ct.includes('application/json');
-    const data = isJson ? await res.json() : await res.text();
+    const data = ct.includes('application/json') ? await res.json() : await res.text();
     if (!res.ok) {
       if (res.status === 429) throw new Error('429: Gesmoord door rate-limit. Server past backoff toe; probeer het zo meteen opnieuw.');
-      const msg = (isJson && (data.error || data.message)) || `HTTP ${res.status}`;
-      const e = new Error(msg); e.detail = isJson ? JSON.stringify(data) : String(data); throw e;
+      const msg = (ct.includes('application/json') && (data.error || data.message)) || `HTTP ${res.status}`;
+      const e = new Error(msg); e.detail = ct.includes('application/json') ? JSON.stringify(data) : String(data); throw e;
     }
     return data;
   }
@@ -393,7 +338,6 @@ window.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  // ---------- SWOT rendering ----------
   function renderSWOT(swot) {
     const s = swot || { sterke_punten:[], mogelijke_zorgpunten:[], mogelijke_kansen:[], mogelijke_bedreigingen:[] };
     const box = (title, items, extraClass='') => `
@@ -420,6 +364,16 @@ window.addEventListener('DOMContentLoaded', () => {
     const model = result?.model;
     const throttle = result?.throttleNotice;
 
+    // Voeg de gevraagde (neutrale) waarschuwing toe in de analyseweergave
+    const warningBlock = `
+      <div class="alert warn tiny">
+        <strong>Let op:</strong> voorkom een overhaaste “coup de cœur”, een term die makelaars graag gebruiken maar
+        die voor de koper risico’s kan inhouden: te snel en op emotie tot aankoop komen. Weeg rustig af, bepaal de
+        totale acquisitiekosten (incl. makelaar en notaris), en plan verbouwingskosten realistisch in. Tip: de koper kan
+        een eigen notaris kiezen; de cumulatieve notariskosten blijven doorgaans gelijk.
+      </div>
+    `;
+
     const vragen = [
       ...(out.communicatie?.verkoper || []),
       ...(out.communicatie?.notaris || []),
@@ -437,20 +391,17 @@ window.addEventListener('DOMContentLoaded', () => {
 
       <h3>Vragen & Communicatie</h3>
       ${vragen.length ? `<ul>${vragen.map(v => `<li>${escapeHtml(v)}</li>`).join('')}</ul>` : '<p class="muted">—</p>'}
+
+      ${warningBlock}
     `;
     smoothReveal(overviewPanel);
   }
 
-  // ---------- Compose (berichten/belscripts) ----------
-  function getChannel() {
-    return (document.querySelector('input[name="channel"]:checked')?.value) || 'email';
-  }
+  // Compose
+  function getChannel(){ return (document.querySelector('input[name="channel"]:checked')?.value) || 'email'; }
   function updateCTALabelsForChannel() {
-    const channel = getChannel(); // email | pb | phone | letter
-    const word =
-      channel === 'letter' ? 'brief' :
-      channel === 'phone'  ? 'belscript' :
-      'bericht';
+    const channel = getChannel();
+    const word = channel === 'letter' ? 'brief' : channel === 'phone' ? 'belscript' : 'bericht';
     if (btnNotary) btnNotary.textContent = word === 'belscript' ? 'Maak belscript voor notaris (FR)' : `Maak ${word} voor notaris (FR)`;
     if (btnAgent)  btnAgent.textContent  = word === 'belscript' ? 'Maak belscript voor makelaar (NL)' : `Maak ${word} voor makelaar (NL)`;
     if (btnSeller) btnSeller.textContent = word === 'belscript' ? 'Maak belscript voor verkoper (FR/NL)' : `Maak ${word} aan verkoper (FR/NL)`;
@@ -501,9 +452,7 @@ window.addEventListener('DOMContentLoaded', () => {
     lines.push("Exact perceelnummer later via notaris opvragen.");
     lines.push("");
 
-    if (summary?.commune) {
-      lines.push(`Gemeente: ${summary.commune.name} (INSEE ${summary.commune.insee}, dep. ${summary.commune.department?.code || '-'})`);
-    }
+    if (summary?.commune) lines.push(`Gemeente: ${summary.commune.name} (INSEE ${summary.commune.insee}, dep. ${summary.commune.department?.code || '-'})`);
     if (summary?.georisques) {
       const hits = (summary.georisques.summary || []).filter(s => s.present).map(s => s.label);
       lines.push(`Géorisques: ${hits.length ? hits.join(', ') : 'geen expliciete categorieën gevonden'}`);
@@ -533,25 +482,19 @@ window.addEventListener('DOMContentLoaded', () => {
     return lines.join("\n");
   }
 
-  // ---------- Primaire CTA: Maak dossier ----------
+  // Primaire CTA
   btnPrimary?.addEventListener('click', withLock(btnPrimary, async () => {
     const values = collectInput();
     if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
 
-    // Start voortgang
-    showProgress();
-    setProgress(10, 'Basis wordt opgebouwd…');
-
-    // 0) Basis tonen
+    showProgress(); setProgress(10, 'Basis wordt opgebouwd…');
     renderDossier(values);
 
-    // 1) Officiële data ophalen
     const target = $('#official-data');
     if (target) target.innerHTML = `<div class="alert info">Officiële gegevens worden opgehaald…</div>`;
     setProgress(45, 'Officiële gegevens ophalen…');
     const summary = await fetchSummary(values.city, values.postcode);
 
-    // 2) Analyse
     setProgress(70, 'Analyse genereren…');
     overviewOut.innerHTML = `<div class="alert info">Analyse wordt gegenereerd…</div>`;
     smoothReveal(overviewPanel);
@@ -564,41 +507,31 @@ window.addEventListener('DOMContentLoaded', () => {
       renderOverview(result);
       setProgress(100, 'Gereed');
 
-      // Communicatieknoppen pas tonen als alles klaar is
-      if (composeSection) {
-        composeSection.removeAttribute('hidden');
-      }
-
-      // Exportknop beschikbaar maken ná analyse (en éénmalig toevoegen)
+      if (composeSection) composeSection.removeAttribute('hidden');
       ensureExportButtonOnce();
-
     } catch (err) {
       overviewOut.innerHTML = `<div class="alert error"><strong>Fout:</strong> ${escapeHtml(err.message)}${err.detail ? `<div class="tiny muted">${escapeHtml(err.detail)}</div>` : ''}</div>`;
     } finally {
-      // Laat de voortgang nog even zichtbaar voor feedback
       setTimeout(() => hideProgress(), 600);
     }
   }));
 
-  // ---------- Export (PDF/print) ----------
+  // Export
+  let btnExport = null;
   function ensureExportButtonOnce() {
     if (btnExport) return;
     btnExport = document.createElement('button');
     btnExport.id = 'btn-export';
     btnExport.className = 'btn';
     btnExport.textContent = 'Exporteer rapport (PDF/print)';
-
-    // Plaats export-knop ná de primaire actions, met ruimte tot compose
     const actions = document.querySelector('.actions');
     if (actions) {
-      const spacer = document.createElement('div');
-      spacer.className = 'spacer-lg';
+      const spacer = document.createElement('div'); spacer.className = 'spacer-lg';
       actions.insertAdjacentElement('afterend', spacer);
       spacer.insertAdjacentElement('afterend', btnExport);
     } else {
       document.body.appendChild(btnExport);
     }
-
     btnExport.addEventListener('click', () => {
       const values = collectInput();
       const summary = window.__lastSummary || null;
@@ -671,11 +604,14 @@ window.addEventListener('DOMContentLoaded', () => {
     const comms       = extractSection(overviewHtml, /Vragen & Communicatie/i);
     const omgeving    = renderOfficialSummaryToStatic(summary);
 
-    // Alleen in PDF opnemen:
+    // Bijgewerkte waarschuwingstekst (géén oude coup-de-cœur-paragraaf)
     const waarschuwing = `
-      <p><strong>Waarschuwing:</strong> laat u niet meeslepen door een “coup de cœur”. Weeg rustig af. Stel de totale acquisitiekosten <strong>volledig</strong> vast (incl. makelaars- en notariskosten) en plan verbouwingskosten realistisch in.</p>
-      <p class="tiny muted">Tip: als koper kunt u <em>zelf</em> een notaris inschakelen; de cumulatieve notariskosten blijven in de praktijk gelijk.</p>
-      <p class="tiny muted">Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.</p>
+      <p><strong>Waarschuwing:</strong> voorkom een overhaaste “coup de cœur”, een term die makelaars graag gebruiken maar
+      die voor de koper risico’s kan inhouden: te snel en op emotie tot een aankoop komen. Weeg rustig af, bepaal de totale
+      acquisitiekosten (inclusief makelaars- en notariskosten) en plan verbouwingskosten realistisch in. Tip: de koper kan een
+      eigen notaris kiezen; de cumulatieve notariskosten blijven doorgaans gelijk.</p>
+      <p class="tiny muted">Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële
+      bronnen (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.</p>
     `;
 
     const style = `
