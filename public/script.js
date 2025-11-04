@@ -1,10 +1,6 @@
 // /public/script.js
-// Immodiagnostique – solide UI-flow met voortgang, timeouts, annuleren, export en compose
-// Alle fetches uitsluitend via /api/*
-// Timeouts: 12s (GET) / 20s (POST). Bij 429 meldt UI throttling.
-// Spinner + statusregels + klein logboek (#progress-log)
-// “Annuleer” breekt lopende requests af en reset spinner.
-// Compose/Export worden pas actief na succesvolle analyse.
+// Immodiagnostique – robuuste UI: voortgang, timeouts, annuleren, watchdog, nette logs.
+// Alle fetches via /api/*; nooit externe sites uit de browser.
 
 window.addEventListener('DOMContentLoaded', () => {
   const $ = (s) => document.querySelector(s);
@@ -20,9 +16,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // UI
   const btnGenerate   = $('#btn-generate');
-  const loader        = $('#loader');                 // bevat .spinner + .spinner-label
+  const loader        = $('#loader');
   const spinnerLabel  = loader?.querySelector('.spinner-label');
-  const logArea       = $('#progress-log');           // optioneel, netjes
+  const logArea       = $('#progress-log');
   const dossierPanel  = $('#dossier-panel');
   const dossierOut    = $('#dossier-output');
   const overviewPanel = $('#overview-panel');
@@ -35,13 +31,24 @@ window.addEventListener('DOMContentLoaded', () => {
   const btnAgent  = $('#btn-agent');
   const btnSeller = $('#btn-seller');
 
-  // Annuleren
+  // Abort management
   let runId = 0;
   let activeControllers = [];
   function resetControllers() {
     try { activeControllers.forEach(c => c.abort()); } catch {}
     activeControllers = [];
   }
+
+  // Watchdog: zet spinner altijd uit na X seconden als failsafe
+  let spinnerWatchdog = null;
+  function armWatchdog(ms = 30000, reason = 'watchdog timeout') {
+    clearWatchdog();
+    spinnerWatchdog = setTimeout(() => {
+      appendLog(`⏱ ${reason} – spinner geforceerd uit`);
+      hideSpinner();
+    }, ms);
+  }
+  function clearWatchdog() { if (spinnerWatchdog) { clearTimeout(spinnerWatchdog); spinnerWatchdog = null; } }
 
   // Helpers
   const sanitize = (s) => String(s ?? '').trim();
@@ -53,7 +60,6 @@ window.addEventListener('DOMContentLoaded', () => {
     try { return new Intl.NumberFormat('nl-NL', { style:'currency', currency:'EUR', maximumFractionDigits:0 }).format(Number(n)); }
     catch { return String(n); }
   };
-
   function buildFullAddress({ number, street, postcode, city }) {
     const parts = [];
     if (sanitize(number)) parts.push(sanitize(number));
@@ -68,9 +74,11 @@ window.addEventListener('DOMContentLoaded', () => {
     if (spinnerLabel) spinnerLabel.textContent = msg || 'Bezig…';
     loader?.removeAttribute('hidden');
     appendLog(msg || 'Bezig…');
+    armWatchdog(30000, 'lange bewerking');
   }
   function hideSpinner() {
     loader?.setAttribute('hidden', '');
+    clearWatchdog();
   }
   function appendLog(line) {
     if (!logArea || !line) return;
@@ -82,7 +90,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   function clearLog() { if (logArea) logArea.innerHTML = ''; }
 
-  // HTTP met timeout
+  // HTTP met timeout en duidelijke foutmeldingen
   function withTimeout(ms, fetcher) {
     const controller = new AbortController();
     activeControllers.push(controller);
@@ -98,24 +106,29 @@ window.addEventListener('DOMContentLoaded', () => {
     try {
       const data = await withTimeout(12000, async (signal) => {
         const res = await fetch(url, { headers: { 'Accept': 'application/json' }, signal });
-        const isJson = (res.headers.get('content-type') || '').includes('application/json');
+        // 404 favicon is onschuldig
+        if (res.status === 404 && /favicon\.ico(\?|$)/i.test(url)) {
+          appendLog('⚐ favicon.ico 404 genegeerd');
+          return null;
+        }
+        const ct = res.headers.get('content-type') || '';
+        const isJson = ct.includes('application/json');
         const body = isJson ? await res.json() : null;
-        if (!res.ok || !body?.ok) {
+        if (!res.ok || (isJson && body && body.ok === false)) {
           const msg = (body && (body.error || body.message)) || `HTTP ${res.status}`;
           const err = new Error(msg);
           err.status = res.status;
+          err.url = url;
           throw err;
         }
         return body;
       });
-      appendLog(`✔ ${label || url}`);
+      if (data) appendLog(`✔ ${label || url}`);
       return data;
     } catch (e) {
-      if (e?.name === 'AbortError') {
-        appendLog(`⏱ Timeout bij ${label || url}`);
-        return null;
-      }
-      appendLog(`✖ Fout bij ${label || url}: ${e.message || 'onbekend'}`);
+      if (e?.name === 'AbortError') { appendLog(`⏹ Afgebroken: ${label || url}`); return null; }
+      const tag = e?.status ? `HTTP ${e.status}` : 'FOUT';
+      appendLog(`✖ ${tag} bij ${label || url} → ${e?.url || url}`);
       return null;
     }
   }
@@ -139,6 +152,7 @@ window.addEventListener('DOMContentLoaded', () => {
           const err = new Error(msg);
           err.status = res.status;
           err.detail = isJson ? JSON.stringify(body) : String(body);
+          err.url = url;
           throw err;
         }
         appendLog(`✔ ${label || url}`);
@@ -146,11 +160,9 @@ window.addEventListener('DOMContentLoaded', () => {
       });
       return data;
     } catch (e) {
-      if (e?.name === 'AbortError') {
-        appendLog(`⏹ Afgebroken: ${label || url}`);
-        throw e;
-      }
-      appendLog(`✖ Fout bij ${label || url}: ${e.message || 'onbekend'}`);
+      if (e?.name === 'AbortError') { appendLog(`⏹ Afgebroken: ${label || url}`); throw e; }
+      const tag = e?.status ? `HTTP ${e.status}` : 'FOUT';
+      appendLog(`✖ ${tag} bij ${label || url} → ${e?.url || url}`);
       throw e;
     }
   }
@@ -172,32 +184,18 @@ window.addEventListener('DOMContentLoaded', () => {
             ${values.adLink ? `<div class="note">Advertentielink: <code>${escapeHtml(values.adLink)}</code></div>` : ''}
           </div>
         </li>
-        <li>
-          <strong>2. Risico's (Géorisques)</strong>
-          <div class="box">ERP (≤ 6 maanden) vereist zodra adres exact is.</div>
-        </li>
-        <li>
-          <strong>3. Verkoopprijzen (DVF)</strong>
-          <div class="box">Indicatief op gemeenteniveau.</div>
-        </li>
-        <li>
-          <strong>4. Bestemmingsplan (PLU)</strong>
-          <div class="box">Check zone/beperkingen via Géoportail Urbanisme (PLU/SUP).</div>
-        </li>
+        <li><strong>2. Risico's (Géorisques)</strong><div class="box">ERP (≤ 6 maanden) vereist zodra adres exact is.</div></li>
+        <li><strong>3. Verkoopprijzen (DVF)</strong><div class="box">Indicatief op gemeenteniveau.</div></li>
+        <li><strong>4. Bestemmingsplan (PLU)</strong><div class="box">Check zone/beperkingen via Géoportail Urbanisme (PLU/SUP).</div></li>
       </ol>
       <div id="official-data"></div>
     `;
     dossierPanel?.removeAttribute('hidden');
   }
-
   function appendOfficialSection(html) {
-    const mount = $('#official-data');
-    if (!mount) return;
-    const div = document.createElement('div');
-    div.innerHTML = html;
-    mount.appendChild(div);
+    const mount = $('#official-data'); if (!mount) return;
+    const div = document.createElement('div'); div.innerHTML = html; mount.appendChild(div);
   }
-
   function renderCommune(c) {
     appendOfficialSection(`
       <section>
@@ -209,7 +207,6 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
-
   function renderGeorisques(gr) {
     const items = (gr.summary || []).map(s => {
       const badge = s.present ? '✅' : '—';
@@ -226,7 +223,6 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
-
   function renderGPU(gpu) {
     const z = gpu.zones || [];
     const items = z.length
@@ -242,7 +238,6 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
-
   function renderGPUDoc(gpudoc) {
     const docs = gpudoc.documents || [];
     const items = docs.length
@@ -262,7 +257,6 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
-
   function renderDVF(dvf) {
     let inner = '<li class="muted">Geen samenvatting beschikbaar (gebruik links)</li>';
     if (dvf.summary?.total) {
@@ -285,7 +279,6 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
-
   function renderSWOT(swot) {
     const s = swot || { sterke_punten:[], mogelijke_zorgpunten:[], mogelijke_kansen:[], mogelijke_bedreigingen:[] };
     const cell = (title, items, extra='') => `
@@ -306,17 +299,14 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `;
   }
-
   function renderOverview(result) {
     const out = result?.output || {};
     const throttle = result?.throttleNotice;
-
     const vragen = [
       ...(out.communicatie?.verkoper || []),
       ...(out.communicatie?.notaris || []),
       ...(out.communicatie?.makelaar || []),
     ];
-
     overviewOut.innerHTML = `
       ${throttle ? `<div class="alert warn">Throttling door Gemini; backoff toegepast. (${escapeHtml(throttle)})</div>` : ''}
       <div class="small muted">Model: <code>${escapeHtml(result?.model || '')}</code> · ${new Date().toLocaleString()}</div>
@@ -401,7 +391,7 @@ window.addEventListener('DOMContentLoaded', () => {
     return lines.join('\n');
   }
 
-  // Export
+  // Export-knop (pas zinvol na analyse)
   let btnExport = null;
   function ensureExportButtonOnce() {
     if (btnExport) return;
@@ -422,7 +412,6 @@ window.addEventListener('DOMContentLoaded', () => {
       w.document.open(); w.document.write(html); w.document.close(); w.focus(); w.print();
     });
   }
-
   function renderOfficialSummaryToStatic(summary) {
     if (!summary) return `<div class="box"><p class="muted">Geen officiële gegevens opgehaald.</p></div>`;
     const parts = [];
@@ -464,23 +453,19 @@ window.addEventListener('DOMContentLoaded', () => {
     }
     return parts.join('\n');
   }
-
   function buildPrintableReport(values, summary, overviewHtml) {
     const title = 'IMMODIAGNOSTIQUE – Rapport';
     const addr = buildFullAddress(values);
     const today = new Date().toLocaleDateString('nl-NL');
-
     const extract = (html, h3Text) => {
       const rx = new RegExp(`<h3[^>]*>${h3Text}<\/h3>[\\s\\S]*?(?=<h3|$)`, 'i');
       const m = (html || '').match(rx);
       return m ? m[0].replace(/^<h3[^>]*>[^<]*<\/h3>/i, '').trim() : '';
     };
-
     const swotSection = extract(overviewHtml, 'SWOT-matrix');
     const actions     = extract(overviewHtml, 'Actieplan');
     const comms       = extract(overviewHtml, 'Vragen & Communicatie');
     const omgeving    = renderOfficialSummaryToStatic(summary);
-
     const waarschuwing = `
       <p><strong>Waarschuwing:</strong> voorkom een overhaaste “coup de cœur”. Weeg rustig af, bepaal totale acquisitiekosten
       (inclusief makelaars- en notariskosten) en plan verbouwingskosten realistisch in. Tip: de koper kan een eigen notaris
@@ -488,7 +473,6 @@ window.addEventListener('DOMContentLoaded', () => {
       <p class="small muted">Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële
       bronnen (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.</p>
     `;
-
     const style = `
       <style>
         :root { --brand:#800000; --ink:#222; --muted:#666; --ok:#0a7f00; --warn:#b00020; }
@@ -511,7 +495,6 @@ window.addEventListener('DOMContentLoaded', () => {
         @media print { a { color: inherit; text-decoration: none; } }
       </style>
     `;
-
     return `
 <!DOCTYPE html>
 <html lang="nl"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>${style}</head>
@@ -519,7 +502,6 @@ window.addEventListener('DOMContentLoaded', () => {
   <h1>IMMODIAGNOSTIQUE – Rapport</h1>
   <div class="small muted">Datum: ${escapeHtml(today)}</div>
   <div class="hr"></div>
-
   <h2>1. Vastgoeddossier</h2>
   <div class="box">
     <div><strong>Adres/advertentie:</strong> ${escapeHtml(addr)}</div>
@@ -527,23 +509,16 @@ window.addEventListener('DOMContentLoaded', () => {
     ${values.adLink ? `<div><strong>Advertentielink:</strong> <code>${escapeHtml(values.adLink)}</code></div>` : ``}
     <div class="small muted">Exact perceelnummer later bij de notaris opvragen.</div>
   </div>
-
   <h2>2. Omgevingsdossier (officiële bronnen)</h2>
   ${omgeving}
-
   <h2>3. Actieplan</h2>
   <div class="box">${actions || '<p class="muted">—</p>'}</div>
-
   <h3>Communicatie & Vragen</h3>
   <div class="box">${comms || '<p class="muted">—</p>'}</div>
-
   <div class="hr"></div>
-
   <h2>Bijlage A – SWOT-matrix</h2>
   <div class="box">${swotSection || '<p class="muted">—</p>'}</div>
-
   <div class="hr"></div>
-
   <h2>Waarschuwing & Disclaimer</h2>
   <div class="box">${waarschuwing}</div>
 </div></body></html>`;
@@ -565,19 +540,18 @@ window.addEventListener('DOMContentLoaded', () => {
   // Orkestratie
   async function fetchSummarySequential(city, postcode) {
     const combined = { ok:true, input:{ city, postcode } };
-
     const comm = await fetchCommune(city, postcode);
-    if (!comm?.commune) return combined; // zonder INSEE geen vervolg
-    combined.commune = comm.commune; renderCommune(comm.commune);
-
-    const insee = combined.commune.insee;
-
-    const gr  = await fetchGeorisques(insee); if (gr)  { combined.georisques = gr; renderGeorisques(gr); }
-    const gpu = await fetchGPU(insee);        if (gpu) { combined.gpu = gpu; renderGPU(gpu); }
-    const gd  = await fetchGPUDoc(insee);     if (gd)  { combined.gpudoc = gd; renderGPUDoc(gd); }
-    const dvf = await fetchDVF(insee);        if (dvf) { combined.dvf = dvf; renderDVF(dvf); }
-
-    combined.meta = { insee, timestamp: new Date().toISOString() };
+    if (comm?.commune) {
+      combined.commune = comm.commune; renderCommune(comm.commune);
+      const insee = combined.commune.insee;
+      const gr  = await fetchGeorisques(insee); if (gr)  { combined.georisques = gr; renderGeorisques(gr); }
+      const gpu = await fetchGPU(insee);        if (gpu) { combined.gpu = gpu; renderGPU(gpu); }
+      const gd  = await fetchGPUDoc(insee);     if (gd)  { combined.gpudoc = gd; renderGPUDoc(gd); }
+      const dvf = await fetchDVF(insee);        if (dvf) { combined.dvf = dvf; renderDVF(dvf); }
+      combined.meta = { insee, timestamp: new Date().toISOString() };
+    } else {
+      appendLog('ℹ Geen INSEE: alleen basisdossier zonder officiële bronnen');
+    }
     window.__lastSummary = combined;
     return combined;
   }
@@ -585,7 +559,6 @@ window.addEventListener('DOMContentLoaded', () => {
   async function handleGenerate(thisRunId) {
     clearLog();
     showSpinner('Dossier wordt opgebouwd…');
-
     const values = collectInput();
     if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); hideSpinner(); return; }
 
@@ -622,7 +595,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Annuleer-knop
+  // Annuleer-knop: direct spinner weg + abort + run invalidatie
   let cancelBtn = null;
   function ensureCancelButton() {
     if (cancelBtn) return;
@@ -632,9 +605,9 @@ window.addEventListener('DOMContentLoaded', () => {
     cancelBtn.textContent = 'Annuleer';
     cancelBtn.addEventListener('click', () => {
       appendLog('Gebruiker annuleert de huidige run');
-      resetControllers();
-      runId++; // invalideer promises
-      hideSpinner();
+      hideSpinner();          // direct visueel weg
+      resetControllers();     // abort alle fetches
+      runId++;                // invalideer lopende chain
     });
     const actions = document.querySelector('.actions');
     if (actions) actions.appendChild(cancelBtn);
@@ -700,4 +673,5 @@ window.addEventListener('DOMContentLoaded', () => {
   // Defensieve logging
   window.addEventListener('error', (e) => appendLog(`JS-error: ${e.message || e.type}`));
   window.addEventListener('unhandledrejection', (e) => appendLog(`Promise-reject: ${(e.reason && e.reason.message) || String(e.reason)}`));
+  window.addEventListener('beforeunload', () => { try { resetControllers(); } catch {} });
 });
