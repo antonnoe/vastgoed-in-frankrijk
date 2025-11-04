@@ -1,6 +1,6 @@
 // /public/script.js
-// Immodiagnostique – robuuste UI: voortgang, timeouts, annuleren, watchdog, nette logs.
-// Alle fetches via /api/*; nooit externe sites uit de browser.
+// Immodiagnostique – UI met voortgang, annuleren, watchdog + advertentie-tekstanalyse (plaatsnamen, water, 'read more').
+// Belangrijk: geen externe fetches in de browser; alles via /api/*.
 
 window.addEventListener('DOMContentLoaded', () => {
   const $ = (s) => document.querySelector(s);
@@ -39,7 +39,7 @@ window.addEventListener('DOMContentLoaded', () => {
     activeControllers = [];
   }
 
-  // Watchdog: zet spinner altijd uit na X seconden als failsafe
+  // Watchdog voor spinner
   let spinnerWatchdog = null;
   function armWatchdog(ms = 30000, reason = 'watchdog timeout') {
     clearWatchdog();
@@ -90,15 +90,12 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   function clearLog() { if (logArea) logArea.innerHTML = ''; }
 
-  // HTTP met timeout en duidelijke foutmeldingen
+  // HTTP met timeout en nette fouten
   function withTimeout(ms, fetcher) {
     const controller = new AbortController();
     activeControllers.push(controller);
-    const timer = setTimeout(() => {
-      try { controller.abort(); } catch {}
-    }, ms);
-    return fetcher(controller.signal)
-      .finally(() => clearTimeout(timer));
+    const timer = setTimeout(() => { try { controller.abort(); } catch {} }, ms);
+    return fetcher(controller.signal).finally(() => clearTimeout(timer));
   }
 
   async function getJson(url, label) {
@@ -106,20 +103,13 @@ window.addEventListener('DOMContentLoaded', () => {
     try {
       const data = await withTimeout(12000, async (signal) => {
         const res = await fetch(url, { headers: { 'Accept': 'application/json' }, signal });
-        // 404 favicon is onschuldig
-        if (res.status === 404 && /favicon\.ico(\?|$)/i.test(url)) {
-          appendLog('⚐ favicon.ico 404 genegeerd');
-          return null;
-        }
+        if (res.status === 404 && /favicon\.ico(\?|$)/i.test(url)) { appendLog('⚐ favicon.ico 404 genegeerd'); return null; }
         const ct = res.headers.get('content-type') || '';
         const isJson = ct.includes('application/json');
         const body = isJson ? await res.json() : null;
         if (!res.ok || (isJson && body && body.ok === false)) {
           const msg = (body && (body.error || body.message)) || `HTTP ${res.status}`;
-          const err = new Error(msg);
-          err.status = res.status;
-          err.url = url;
-          throw err;
+          const err = new Error(msg); err.status = res.status; err.url = url; throw err;
         }
         return body;
       });
@@ -150,9 +140,7 @@ window.addEventListener('DOMContentLoaded', () => {
           if (res.status === 429) appendLog('↻ 429 throttled – server-side backoff toegepast');
           const msg = (isJson && (body.error || body.message)) || `HTTP ${res.status}`;
           const err = new Error(msg);
-          err.status = res.status;
-          err.detail = isJson ? JSON.stringify(body) : String(body);
-          err.url = url;
+          err.status = res.status; err.detail = isJson ? JSON.stringify(body) : String(body); err.url = url;
           throw err;
         }
         appendLog(`✔ ${label || url}`);
@@ -165,6 +153,56 @@ window.addEventListener('DOMContentLoaded', () => {
       appendLog(`✖ ${tag} bij ${label || url} → ${e?.url || url}`);
       throw e;
     }
+  }
+
+  // -------- Advertentie-tekstanalyse (geen scraping, alleen heuristiek) --------
+  function normalizeSpaces(s) { return s.replace(/\s+/g, ' ').trim(); }
+
+  // 1) Vind plaatsnamen in patronen “X min van Y” (FR/NL/EN varianten)
+  function extractNearbyTowns(text) {
+    if (!text) return [];
+    const lower = text.toLowerCase();
+    const candidates = new Set();
+
+    // FR: "à 20 minutes de Berck sur Mer", "à 15 min de Nice"
+    const reFr = /\b(?:à|a)\s*(\d{1,2})\s*(?:min|minutes)\s*(?:de|du|des|d’|d')\s+([A-ZÉÈÀÂÎÔÙÇ][A-Za-zÀ-ÖØ-öø-ÿ' -]{2,})/gmi;
+    // NL: "op 20 minuten van Berck-sur-Mer"
+    const reNl = /\b(?:op|slechts)?\s*(\d{1,2})\s*(?:min(?:uut)?(?:en)?)\s*(?:van|bij)\s+([A-Z][A-Za-zÀ-ÖØ-öø-ÿ' -]{2,})/gmi;
+    // EN: "20 minutes from Berck-sur-Mer"
+    const reEn = /\b(\d{1,2})\s*(?:min|minutes)\s*(?:from|to)\s+([A-Z][A-Za-zÀ-ÖØ-öø-ÿ' -]{2,})/gmi;
+
+    const push = (m) => {
+      const name = normalizeSpaces((m[2] || '').replace(/\s+sur\s+/gi, '-sur-').replace(/\s+Saint\s+/gi, ' Saint-'));
+      if (name.length >= 3) candidates.add(name);
+    };
+    let m;
+    while ((m = reFr.exec(text)) ) push(m);
+    while ((m = reNl.exec(text)) ) push(m);
+    while ((m = reEn.exec(text)) ) push(m);
+
+    // Extra heuristiek: typisch Franse vormen “-sur-Mer”, “Saint-…”
+    const extra = text.match(/\b([A-Z][a-z]+(?:-[A-Z][a-z]+)*(?:-sur-|-sur\-| sur |-sur-)[A-Z][a-z]+)\b/g);
+    if (extra) extra.forEach(v => candidates.add(normalizeSpaces(v)));
+
+    return Array.from(candidates).slice(0, 8);
+  }
+
+  // 2) Water-nabijheid
+  function detectNearWater(text) {
+    if (!text) return false;
+    const kw = [
+      'rivière','fleuve','canal','marais','étang','lagune','bords de mer','bord de mer','digue',
+      'inondable','zone inondable','submersion','crue','berk','mer','littoral'
+    ];
+    const lower = text.toLowerCase();
+    return kw.some(k => lower.includes(k));
+  }
+
+  // 3) Mogelijk afgekapt (Lees meer / Lire plus)
+  function detectTruncated(text) {
+    if (!text) return false;
+    const lower = text.toLowerCase();
+    return /lire\s+plus|lire\s+la\s+suite|read\s+more/.test(lower) || /…(\s*)$/.test(text);
   }
 
   // Rendering
@@ -182,6 +220,7 @@ window.addEventListener('DOMContentLoaded', () => {
             }
             <div class="note">Exact perceel later opvragen bij notaris.</div>
             ${values.adLink ? `<div class="note">Advertentielink: <code>${escapeHtml(values.adLink)}</code></div>` : ''}
+            <div class="small muted">Tip: open eerst “Lees meer / Lire plus” op de advertentiepagina, kopieer dan pas de volledige tekst.</div>
           </div>
         </li>
         <li><strong>2. Risico's (Géorisques)</strong><div class="box">ERP (≤ 6 maanden) vereist zodra adres exact is.</div></li>
@@ -279,6 +318,42 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
+
+  function renderLocationWarnings(values, advertSignals) {
+    const msgs = [];
+    const chosen = sanitize(values.city);
+    const towns = advertSignals?.towns || [];
+    const nearWater = !!advertSignals?.near_water;
+    const truncated = !!advertSignals?.truncated;
+
+    // Locatie-mismatch
+    if (chosen && towns.length) {
+      const normalizedChosen = chosen.replace(/\s+/g, ' ').toLowerCase();
+      const match = towns.some(t => t.replace(/\s+/g, ' ').toLowerCase().includes(normalizedChosen));
+      if (!match) {
+        msgs.push(`Advertentie noemt nabijgelegen plaatsen: ${escapeHtml(towns.join(', '))}. Dit kan afwijken van ingevoerde gemeente (${escapeHtml(chosen)}). Vraag het exacte adres of een kaart-pin op.`);
+      }
+    }
+    // Water
+    if (nearWater) {
+      msgs.push('Tekst wijst op ligging nabij water (rivière/canal/marais/mer). Plan een grondige ERP-check en controleer PLU-zonering.');
+    }
+    // Read more
+    if (truncated) {
+      msgs.push('Advertentietekst lijkt niet volledig. Open eerst “Lees meer / Lire plus”, kopieer daarna de volledige tekst voor betere analyse.');
+    }
+
+    if (!msgs.length) return '';
+    return `
+      <section>
+        <div class="alert warn">
+          <strong>Locatie/kwaliteit waarschuwingen:</strong>
+          <ul>${msgs.map(m => `<li>${m}</li>`).join('')}</ul>
+        </div>
+      </section>
+    `;
+  }
+
   function renderSWOT(swot) {
     const s = swot || { sterke_punten:[], mogelijke_zorgpunten:[], mogelijke_kansen:[], mogelijke_bedreigingen:[] };
     const cell = (title, items, extra='') => `
@@ -299,9 +374,13 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `;
   }
-  function renderOverview(result) {
+
+  function renderOverview(result, values, advertSignals) {
     const out = result?.output || {};
     const throttle = result?.throttleNotice;
+
+    const warnings = renderLocationWarnings(values, advertSignals);
+
     const vragen = [
       ...(out.communicatie?.verkoper || []),
       ...(out.communicatie?.notaris || []),
@@ -310,6 +389,7 @@ window.addEventListener('DOMContentLoaded', () => {
     overviewOut.innerHTML = `
       ${throttle ? `<div class="alert warn">Throttling door Gemini; backoff toegepast. (${escapeHtml(throttle)})</div>` : ''}
       <div class="small muted">Model: <code>${escapeHtml(result?.model || '')}</code> · ${new Date().toLocaleString()}</div>
+      ${warnings}
       ${renderSWOT(out.swot)}
       <h3>Actieplan</h3>
       ${out.actieplan?.length ? `<ul>${out.actieplan.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>` : '<p class="muted">—</p>'}
@@ -335,7 +415,8 @@ window.addEventListener('DOMContentLoaded', () => {
   async function fetchGPUDoc(insee){ return await getJson(`/api/gpu-doc?insee=${encodeURIComponent(insee)}`, 'Raadpleegt GPU-documenten…'); }
   async function fetchDVF(insee){ return await getJson(`/api/dvf?insee=${encodeURIComponent(insee)}`, 'Raadpleegt DVF (verkoopprijzen)…'); }
 
-  function buildSignals(values, summary) {
+  // Signals samenstellen
+  function buildSignals(values, summary, advertSignals) {
     const s = {};
     if (values.price && !Number.isNaN(Number(values.price))) s.price = Number(values.price);
     if (summary?.dvf?.summary?.total?.median_price) s.dvf = { median_price: Number(summary.dvf.summary.total.median_price) };
@@ -343,22 +424,20 @@ window.addEventListener('DOMContentLoaded', () => {
       const flags = {}; for (const item of summary.georisques.summary) flags[item.key] = !!item.present;
       s.georisques = flags;
     }
-    if (values.adText) {
-      const lower = values.adText.toLowerCase();
-      const kw = [];
-      const pushIf = (re, label) => { if (re.test(lower)) kw.push(label); };
-      pushIf(/\b(dpe|étiquette|classe)\b.*\b(a|b|c)\b/, 'dpe A–C');
-      pushIf(/\btriple vitrage\b|\bhr\+\+\b|\bdouble vitrage\b/, 'dubbel/triple glas');
-      pushIf(/\bisolati(e|on)|toit isolé|isolation\b/, 'isolatie');
-      pushIf(/\bpompe à chaleur\b|heat pump\b/, 'warmtepomp');
-      pushIf(/\bà rénover\b|travaux|to renovate\b/, 'renovatie/werk');
-      if (kw.length) s.dpe = { hints: kw };
-      if (kw.length) s.advertentie = { keywords: kw };
+    if (advertSignals?.keywords?.length) s.advertentie = { keywords: advertSignals.keywords.slice(0,12) };
+    if (advertSignals?.towns?.length) {
+      s.advertentie = Object.assign({}, s.advertentie || {}, { towns: advertSignals.towns.slice(0,8) });
+    }
+    if (advertSignals?.near_water) {
+      s.advertentie = Object.assign({}, s.advertentie || {}, { near_water: true });
+    }
+    if (advertSignals?.truncated) {
+      s.advertentie = Object.assign({}, s.advertentie || {}, { truncated: true });
     }
     return s;
   }
 
-  function composeDossierText(values, summary) {
+  function composeDossierText(values, summary, advertSignals) {
     const { adLink, city, price, postcode, street, number, adText } = values;
     const fullAddr = buildFullAddress({ number, street, postcode, city });
     const route = (street || number || postcode) ? 'Route B (adres bekend)' : 'Route A (geen adres)';
@@ -384,6 +463,11 @@ window.addEventListener('DOMContentLoaded', () => {
       const t = summary.dvf.summary.total;
       lines.push(`DVF (indicatief): transacties=${t.count}, mediaan prijs≈${fmtMoney(t.median_price)}, mediaan €/m²≈${fmtMoney(t.median_eur_m2)}`);
     }
+    // Advertentie-observaties
+    if (advertSignals?.towns?.length) lines.push(`Advertentie noemt nabij: ${advertSignals.towns.join(', ')}`);
+    if (advertSignals?.near_water) lines.push('Advertentie suggereert ligging nabij water (extra ERP/PLU check).');
+    if (advertSignals?.truncated) lines.push('Advertentietekst lijkt afgekapt (open “Lire plus/Lees meer” en kopieer opnieuw).');
+
     lines.push('', "2) Risico's (Géorisques)", 'ERP nodig (≤ 6 maanden) indien adres bekend.', '');
     lines.push('3) Verkoopprijzen (DVF)', 'DVF is op gemeenteniveau.', '');
     lines.push('4) Bestemmingsplan (PLU)', 'Noteer zone/beperkingen via Géoportail Urbanisme (PLU/SUP).', '');
@@ -570,22 +654,43 @@ window.addEventListener('DOMContentLoaded', () => {
 
     renderDossier(values);
 
+    // 0) Advertentie-tekstanalyse vooraf (geen netwerk)
+    const advertSignals = {};
+    if (values.adText) {
+      const lower = values.adText.toLowerCase();
+      const kw = [];
+      if (/\b(dpe|étiquette|classe)\b.*\b(a|b|c)\b/i.test(values.adText)) kw.push('dpe A–C');
+      if (/\btriple vitrage\b|\bhr\+\+\b|\bdouble vitrage\b/i.test(values.adText)) kw.push('dubbel/triple glas');
+      if (/\bisolati(e|on)|toit isolé|isolation\b/i.test(values.adText)) kw.push('isolatie');
+      if (/\bpompe à chaleur\b|heat pump\b/i.test(values.adText)) kw.push('warmtepomp');
+      if (/\bà\s*rénover\b|travaux|to renovate\b/i.test(values.adText)) kw.push('renovatie/werk');
+      if (kw.length) advertSignals.keywords = kw;
+
+      advertSignals.towns = extractNearbyTowns(values.adText);
+      advertSignals.near_water = detectNearWater(values.adText);
+      advertSignals.truncated = detectTruncated(values.adText);
+
+      if (advertSignals.towns?.length) appendLog(`↯ Advertentie noemt nabij: ${advertSignals.towns.join(', ')}`);
+      if (advertSignals.near_water) appendLog('↯ Tekst wijst op ligging nabij water');
+      if (advertSignals.truncated) appendLog('↯ Tekst lijkt afgekapt (Lire plus/Lees meer?)');
+    }
+
     // 1) Officiële bronnen
     const summary = await fetchSummarySequential(values.city, values.postcode);
     if (thisRunId !== runId) return; // geannuleerd
 
-    // 2) Analyse
+    // 2) Analyse (met signals incl. advertentie-heuristiek)
     showSpinner('Genereert AI-analyse…');
     overviewOut.innerHTML = `<div class="alert info">Analyse wordt gegenereerd…</div>`;
     overviewPanel?.removeAttribute('hidden');
 
-    const signals = buildSignals(values, summary || {});
-    const dossierText = composeDossierText(values, summary || {});
+    const signals = buildSignals(values, summary || {}, advertSignals);
+    const dossierText = composeDossierText(values, summary || {}, advertSignals);
 
     try {
       const result = await postJson('/api/analyse', { dossier: dossierText, signals }, 'Analyseert (Gemini)…');
       if (thisRunId !== runId) return;
-      renderOverview(result);
+      renderOverview(result, values, advertSignals);
       ensureExportButtonOnce();
     } catch (err) {
       if (err?.name === 'AbortError') return;
@@ -595,7 +700,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Annuleer-knop: direct spinner weg + abort + run invalidatie
+  // Annuleer-knop
   let cancelBtn = null;
   function ensureCancelButton() {
     if (cancelBtn) return;
@@ -647,7 +752,7 @@ window.addEventListener('DOMContentLoaded', () => {
       const channel  = getChannelFor(rec);
       const language = getLanguageFor(rec);
       const summary  = window.__lastSummary || null;
-      const dossierText = `Language: ${language}\nRecipient: ${rec}\n\n${composeDossierText(values, summary || {})}`;
+      const dossierText = `Language: ${language}\nRecipient: ${rec}\n\n${composeDossierText(values, summary || {}, null)}`;
 
       try {
         letterOut.innerHTML = `<div class="alert info">Bericht wordt gegenereerd…</div>`;
