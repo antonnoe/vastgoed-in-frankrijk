@@ -1,30 +1,31 @@
 // /public/script.js
-// Immodiagnostique – één-knops flow: “Maak dossier”
-// - Geen externe fetches in de browser; alles via /api/*
-// - Flow: basisweergave → /api/summary → signals bouwen → /api/analyse → SWOT/Actieplan/Communicatie tonen
-// - SWOT 2×2 (Sterke punten, Mogelijke zorgpunten, Mogelijke kansen, Mogelijke bedreigingen)
-// - Export maakt nette H1/H2-PDF incl. Bijlage A (SWOT-matrix)
+// Immodiagnostique – UX-polish:
+// - Één primaire flow “Maak dossier” met voortgangsbalk (%)
+// - Communicatieknoppen en PDF-export verschijnen pas als het dossier volledig is gegenereerd
+// - Alle knoppen compact; styling via geïnjecteerde CSS (#800000 op knoppen, witte tekst)
+// - Coup-de-cœur waarschuwing/uitgebreide disclaimer: alleen in de PDF (op de pagina verborgen)
 
 window.addEventListener('DOMContentLoaded', () => {
   // ---------- DOM helpers ----------
-  const $ = (s) => document.querySelector(s);
+  const $  = (s) => document.querySelector(s);
+  const $$ = (s) => Array.from(document.querySelectorAll(s));
 
   // Invoer
   const adLinkEl   = $('#adLink');
   const cityEl     = $('#city');
-  const priceEl    = $('#price');        // optioneel
+  const priceEl    = $('#price');
   const postcodeEl = $('#postcode');
   const streetEl   = $('#street');
   const numberEl   = $('#number');
   const adTextEl   = $('#adText');
 
-  // Buttons
-  const btnPrimary   = $('#btn-generate');   // wordt “Maak dossier”
-  const btnMakePromptLegacy = $('#btn-make-prompt'); // verbergen
-  let   btnFetch     = $('#btn-fetch');      // “Haal gegevens op” (optioneel)
-  let   btnExport    = $('#btn-export');     // Export-knop
+  // Acties/knoppen
+  const btnPrimary = $('#btn-generate'); // “Maak dossier”
+  const btnLegacy  = $('#btn-make-prompt'); // verbergen
+  let   btnExport  = $('#btn-export'); // wordt dynamisch getoond ná analyse
 
-  // Compose CTA’s
+  // Contact/compose
+  const composeSection = document.querySelector('.compose');
   const btnNotary = $('#btn-notary');
   const btnAgent  = $('#btn-agent');
   const btnSeller = $('#btn-seller');
@@ -37,11 +38,84 @@ window.addEventListener('DOMContentLoaded', () => {
   const letterPanel   = $('#letter-panel');
   const letterOut     = $('#letter-output');
 
-  // Init UI: één primaire CTA
-  if (btnPrimary) btnPrimary.textContent = 'Maak dossier';
-  if (btnMakePromptLegacy) btnMakePromptLegacy.style.display = 'none';
+  // Disclaimer alleen in PDF (op pagina verbergen)
+  const disclaimerSection = document.querySelector('.disclaimer');
+  if (disclaimerSection) disclaimerSection.style.display = 'none';
 
-  // ---------- Utils ----------
+  // Legacy knop verbergen
+  if (btnLegacy) btnLegacy.style.display = 'none';
+
+  // Compose-sectie verbergen tot analyse compleet is
+  if (composeSection) composeSection.setAttribute('hidden', '');
+
+  // Exportknop verbergen/aanmaken pas na analyse
+  if (btnExport) {
+    btnExport.remove(); // verwijder als er nog eentje in DOM stond
+    btnExport = null;
+  }
+
+  // ---------- Styling injectie (knoppen & progress) ----------
+  const style = document.createElement('style');
+  style.textContent = `
+    :root { --brand: #800000; --ink:#222; --muted:#666; --ok:#0a7f00; --warn:#b00020; }
+    .btn{ background: var(--brand); color:#fff; border:0; border-radius:8px; padding:10px 14px; cursor:pointer; font-weight:600; }
+    .btn + .btn{ margin-left:8px; }
+    .btn.is-loading{ opacity:.75; pointer-events:none; }
+    .btn.btn-primary{ box-shadow: 0 1px 0 rgba(0,0,0,.08); }
+    .spacer-lg{ height: 16px; }
+    .swot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .swot-cell { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; }
+    .swot-cell.ok h4 { color: var(--ok); }
+    .swot-cell.warn h4 { color: var(--warn); }
+    .badgelist { list-style: none; margin: 0; padding: 0; }
+    .badge { display: inline-block; width: 1.4em; text-align: center; margin-right: 6px; }
+    .muted { color: var(--muted); }
+    .tiny { font-size: 12px; }
+    .alert.info { border:1px solid #cfe3ff; background:#f4f8ff; padding:8px 10px; border-radius:6px; }
+    .alert.warn { border:1px solid #ffe0a3; background:#fff8e6; padding:8px 10px; border-radius:6px; }
+    .alert.error{ border:1px solid #f3b5b5; background:#fff5f5; padding:8px 10px; border-radius:6px; }
+    .letter { white-space: pre-wrap; }
+    /* Voortgangsbalk */
+    .progress { height: 10px; background:#eee; border-radius:999px; overflow:hidden; margin:10px 0; }
+    .progress-bar { height:100%; width:0%; background: var(--brand); transition: width .4s ease; }
+    .progress-wrap { display:none; }
+    .progress-wrap.active { display:block; }
+    .progress-label { font-size:12px; color: var(--muted); margin-top:4px; }
+    /* Communicatieknoppen kleiner en met ademruimte */
+    .compose-row .btn{ padding:8px 10px; font-weight:600; }
+    .compose[hidden] { display:none !important; }
+    /* Ruimte tussen primaire CTA en compose */
+    .actions + .compose { margin-top: 18px; }
+  `;
+  document.head.appendChild(style);
+
+  // ---------- Voortgangsbalk ----------
+  // Wordt getoond tijdens “Maak dossier” en geüpdatet per stap
+  const progressWrap = document.createElement('div');
+  progressWrap.className = 'progress-wrap';
+  progressWrap.innerHTML = `
+    <div class="progress"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
+    <div class="progress-label" id="progress-label">Starten…</div>
+  `;
+  // Plaats de voortgangsbalk direct onder de primaire actions (indien aanwezig)
+  const actionsSection = document.querySelector('.actions');
+  if (actionsSection) {
+    actionsSection.insertAdjacentElement('afterend', progressWrap);
+    const spacer = document.createElement('div');
+    spacer.className = 'spacer-lg';
+    progressWrap.insertAdjacentElement('afterend', spacer);
+  }
+  const progressBar   = $('#progress-bar');
+  const progressLabel = $('#progress-label');
+
+  function setProgress(pct, label){
+    if (progressBar) progressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    if (progressLabel) progressLabel.textContent = label || '';
+  }
+  function showProgress(){ progressWrap.classList.add('active'); setProgress(5, 'Bezig met starten…'); }
+  function hideProgress(){ progressWrap.classList.remove('active'); }
+
+  // ---------- Utilities ----------
   const sanitize = (s) => String(s || '').trim();
   const getChannel = () => (document.querySelector('input[name="channel"]:checked')?.value) || 'email';
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -85,14 +159,7 @@ window.addEventListener('DOMContentLoaded', () => {
     } catch { return String(n); }
   }
 
-  function mdListToHtml(text = '') {
-    const lines = text.split(/\r?\n/).map(l => l.trim());
-    const items = lines.filter(l => /^[-*•]\s+/.test(l)).map(l => l.replace(/^[-*•]\s+/, ''));
-    if (!items.length) return text ? `<p>${escapeHtml(text)}</p>` : '';
-    return `<ul>${items.map(li => `<li>${escapeHtml(li)}</li>`).join('')}</ul>`;
-  }
-
-  // ---------- Basic dossier render ----------
+  // ---------- Render basis-dossier ----------
   function renderDossier(values) {
     const { adLink, city, price } = values;
     const fullAddr = buildFullAddress(values);
@@ -262,26 +329,21 @@ window.addEventListener('DOMContentLoaded', () => {
     mount.innerHTML = parts.join('\n');
   }
 
-  // ---------- Signals bouwen uit summary + UI ----------
+  // ---------- Signals bouwen ----------
   function buildSignals(values, summary) {
     const s = {};
     if (values.price && !Number.isNaN(Number(values.price))) s.price = Number(values.price);
 
-    // DVF – als we ooit stats in summary hebben
     if (summary?.dvf?.summary?.total?.median_price) {
       s.dvf = { median_price: Number(summary.dvf.summary.total.median_price) };
     }
 
-    // Géorisques
     if (summary?.georisques?.summary) {
       const flags = {};
-      for (const item of summary.georisques.summary) {
-        flags[item.key] = !!item.present;
-      }
+      for (const item of summary.georisques.summary) flags[item.key] = !!item.present;
       s.georisques = flags;
     }
 
-    // DPE/isolatie (heuristiek uit advertentietekst)
     if (values.adText) {
       const lower = values.adText.toLowerCase();
       const kw = [];
@@ -292,7 +354,6 @@ window.addEventListener('DOMContentLoaded', () => {
       pushIf(/\bpompe à chaleur\b|\bheat pump\b/, 'warmtepomp');
       pushIf(/\bà rénover\b|\btravaux\b|\bto renovate\b/, 'renovatie/werk');
       if (kw.length) s.dpe = { hints: kw };
-      // losse keywords ook meesturen
       s.advertentie = { keywords: kw };
     }
     return s;
@@ -354,7 +415,6 @@ window.addEventListener('DOMContentLoaded', () => {
     `;
   }
 
-  // ---------- Overzicht render ----------
   function renderOverview(result) {
     const out = result?.output || {};
     const model = result?.model;
@@ -382,6 +442,9 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // ---------- Compose (berichten/belscripts) ----------
+  function getChannel() {
+    return (document.querySelector('input[name="channel"]:checked')?.value) || 'email';
+  }
   function updateCTALabelsForChannel() {
     const channel = getChannel(); // email | pb | phone | letter
     const word =
@@ -392,7 +455,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (btnAgent)  btnAgent.textContent  = word === 'belscript' ? 'Maak belscript voor makelaar (NL)' : `Maak ${word} voor makelaar (NL)`;
     if (btnSeller) btnSeller.textContent = word === 'belscript' ? 'Maak belscript voor verkoper (FR/NL)' : `Maak ${word} aan verkoper (FR/NL)`;
   }
-  document.querySelectorAll('input[name="channel"]').forEach(r => r.addEventListener('change', updateCTALabelsForChannel));
+  $$('.channel input[name="channel"]').forEach(r => r.addEventListener('change', updateCTALabelsForChannel));
   updateCTALabelsForChannel();
 
   function onCompose(role) {
@@ -475,16 +538,22 @@ window.addEventListener('DOMContentLoaded', () => {
     const values = collectInput();
     if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
 
-    // 0) Direct basis tonen
+    // Start voortgang
+    showProgress();
+    setProgress(10, 'Basis wordt opgebouwd…');
+
+    // 0) Basis tonen
     renderDossier(values);
 
     // 1) Officiële data ophalen
     const target = $('#official-data');
-    if (target) target.innerHTML = `<div class="alert info">1/2 Officiële gegevens worden opgehaald…</div>`;
+    if (target) target.innerHTML = `<div class="alert info">Officiële gegevens worden opgehaald…</div>`;
+    setProgress(45, 'Officiële gegevens ophalen…');
     const summary = await fetchSummary(values.city, values.postcode);
 
-    // 2) Signals bouwen & analyse
-    overviewOut.innerHTML = `<div class="alert info">2/2 Analyse wordt gegenereerd…</div>`;
+    // 2) Analyse
+    setProgress(70, 'Analyse genereren…');
+    overviewOut.innerHTML = `<div class="alert info">Analyse wordt gegenereerd…</div>`;
     smoothReveal(overviewPanel);
 
     const signals = buildSignals(values, summary);
@@ -493,41 +562,43 @@ window.addEventListener('DOMContentLoaded', () => {
     try {
       const result = await postJson('/api/analyse', { dossier: dossierText, signals });
       renderOverview(result);
+      setProgress(100, 'Gereed');
+
+      // Communicatieknoppen pas tonen als alles klaar is
+      if (composeSection) {
+        composeSection.removeAttribute('hidden');
+      }
+
+      // Exportknop beschikbaar maken ná analyse (en éénmalig toevoegen)
+      ensureExportButtonOnce();
+
     } catch (err) {
       overviewOut.innerHTML = `<div class="alert error"><strong>Fout:</strong> ${escapeHtml(err.message)}${err.detail ? `<div class="tiny muted">${escapeHtml(err.detail)}</div>` : ''}</div>`;
+    } finally {
+      // Laat de voortgang nog even zichtbaar voor feedback
+      setTimeout(() => hideProgress(), 600);
     }
   }));
 
-  // ---------- Optioneel: “Haal gegevens op” ----------
-  (function ensureFetchButton() {
-    if (!btnFetch) {
-      btnFetch = document.createElement('button');
-      btnFetch.id = 'btn-fetch';
-      btnFetch.className = 'btn';
-      btnFetch.textContent = 'Haal gegevens op';
-      const ref = btnPrimary || document.body;
-      ref.parentNode?.insertBefore(btnFetch, ref.nextSibling);
-    }
-    btnFetch.addEventListener('click', withLock(btnFetch, async () => {
-      const values = collectInput();
-      if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); return; }
-      renderDossier(values);
-      const target = $('#official-data');
-      if (target) target.innerHTML = `<div class="alert info">Officiële gegevens worden opgehaald…</div>`;
-      await fetchSummary(values.city, values.postcode);
-    }));
-  })();
-
   // ---------- Export (PDF/print) ----------
-  (function ensureExportButton() {
-    if (!btnExport) {
-      btnExport = document.createElement('button');
-      btnExport.id = 'btn-export';
-      btnExport.className = 'btn';
-      btnExport.textContent = 'Exporteer rapport (PDF/print)';
-      const ref = (btnFetch || btnPrimary || document.body);
-      ref.parentNode?.insertBefore(btnExport, ref.nextSibling);
+  function ensureExportButtonOnce() {
+    if (btnExport) return;
+    btnExport = document.createElement('button');
+    btnExport.id = 'btn-export';
+    btnExport.className = 'btn';
+    btnExport.textContent = 'Exporteer rapport (PDF/print)';
+
+    // Plaats export-knop ná de primaire actions, met ruimte tot compose
+    const actions = document.querySelector('.actions');
+    if (actions) {
+      const spacer = document.createElement('div');
+      spacer.className = 'spacer-lg';
+      actions.insertAdjacentElement('afterend', spacer);
+      spacer.insertAdjacentElement('afterend', btnExport);
+    } else {
+      document.body.appendChild(btnExport);
     }
+
     btnExport.addEventListener('click', () => {
       const values = collectInput();
       const summary = window.__lastSummary || null;
@@ -537,9 +608,8 @@ window.addEventListener('DOMContentLoaded', () => {
       if (!w) return alert('Pop-up geblokkeerd: sta pop-ups tijdelijk toe voor export.');
       w.document.open(); w.document.write(html); w.document.close(); w.focus(); w.print();
     });
-  })();
+  }
 
-  // ---------- Export builder (incl. Bijlage A – SWOT) ----------
   function extractSection(html, headingRegex) {
     if (!html) return '';
     const idx = html.search(headingRegex);
@@ -596,12 +666,12 @@ window.addEventListener('DOMContentLoaded', () => {
     const addr = buildFullAddress(values);
     const today = new Date().toLocaleDateString('nl-NL');
 
-    // Pak onderdelen uit het on-screen overzicht
     const swotSection = extractSection(overviewHtml, /SWOT-matrix/i);
     const actions     = extractSection(overviewHtml, /Actieplan/i);
     const comms       = extractSection(overviewHtml, /Vragen & Communicatie/i);
     const omgeving    = renderOfficialSummaryToStatic(summary);
 
+    // Alleen in PDF opnemen:
     const waarschuwing = `
       <p><strong>Waarschuwing:</strong> laat u niet meeslepen door een “coup de cœur”. Weeg rustig af. Stel de totale acquisitiekosten <strong>volledig</strong> vast (incl. makelaars- en notariskosten) en plan verbouwingskosten realistisch in.</p>
       <p class="tiny muted">Tip: als koper kunt u <em>zelf</em> een notaris inschakelen; de cumulatieve notariskosten blijven in de praktijk gelijk.</p>
@@ -626,9 +696,12 @@ window.addEventListener('DOMContentLoaded', () => {
         .badgelist { list-style: none; margin: 0; padding: 0; }
         .badgelist li { margin: 2px 0; }
         .badge { display: inline-block; width: 1.4em; text-align: center; margin-right: 6px; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .hr { height: 1px; background: #ddd; margin: 24px 0; }
-        @media print { a { color: inherit; text-decoration: none; } .hr { break-after: page; height: 0; border: none; } }
+        .swot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .swot-cell { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; }
+        .swot-cell.ok h4 { color: var(--ok); }
+        .swot-cell.warn h4 { color: var(--warn); }
+        @media print { a { color: inherit; text-decoration: none; } .hr { break-after: page; height:0; border:none; } }
       </style>
     `;
 
@@ -670,23 +743,4 @@ window.addEventListener('DOMContentLoaded', () => {
   <div class="box">${waarschuwing}</div>
 </div></body></html>`;
   }
-
-  // ---------- Mini styles voor in-app SWOT ----------
-  // (Voegt enkel grid-styling toe als de pagina nog geen CSS daarvoor heeft)
-  const style = document.createElement('style');
-  style.textContent = `
-    .swot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .swot-cell { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; }
-    .swot-cell.ok h4 { color: #0a7f00; }
-    .swot-cell.warn h4 { color: #b00020; }
-    .badgelist { list-style: none; margin: 0; padding: 0; }
-    .badge { display: inline-block; width: 1.4em; text-align: center; margin-right: 6px; }
-    .muted { color: #666; }
-    .alert.info { border:1px solid #cfe3ff; background:#f4f8ff; padding:8px 10px; border-radius:6px; }
-    .alert.warn { border:1px solid #ffe0a3; background:#fff8e6; padding:8px 10px; border-radius:6px; }
-    .alert.error{ border:1px solid #f3b5b5; background:#fff5f5; padding:8px 10px; border-radius:6px; }
-    .letter { white-space: pre-wrap; }
-    .btn.is-loading { opacity:.7; pointer-events:none; }
-  `;
-  document.head.appendChild(style);
 });
