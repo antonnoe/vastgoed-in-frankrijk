@@ -17,13 +17,13 @@
   </header>
 
   <main class="container">
-    <!-- Intro / uitleg -->
+    <!-- Intro -->
     <section class="intro">
       <h2>Voer beschikbare gegevens in</h2>
       <p class="muted">
-        Vul één adres in, óf plak een advertentielink. <strong>Plak ook de advertentietekst</strong> zodat we meer context hebben.
-        Heb je (nog) geen exact adres? Geen probleem — we starten met de plaatsnaam. Zodra het exacte adres bekend is,
-        kun je de analyse opnieuw draaien voor meer detail (Géorisques-ERP op adres, preciezere PLU/SUP, nauwkeuriger DVF).
+        Vul één adres in, óf plak een advertentielink. <strong>Plak ook de advertentietekst</strong> voor extra context.
+        Heb je (nog) geen exact adres? Geen probleem — we starten met de plaatsnaam. <br/>
+        Zodra het exacte adres bekend is, kun je de analyse opnieuw draaien voor meer detail (adres-ERP, preciezere PLU/SUP, DVF-aanscherping).
       </p>
     </section>
 
@@ -31,7 +31,7 @@
     <section class="input-grid">
       <div class="field">
         <label for="adLink">Advertentielink <span class="muted">(optioneel)</span></label>
-        <input id="adLink" type="url" placeholder="https://www.nederlanders.fr/..." autocomplete="off"/>
+        <input id="adLink" type="url" placeholder="https://www..." autocomplete="off"/>
       </div>
 
       <div class="field required">
@@ -65,42 +65,82 @@
       </div>
     </section>
 
-    <!-- Primaire actie (enkel) -->
-    <section class="actions">
-      <button id="btn-generate" class="btn btn-primary">Maak dossier</button>
-      <!-- GEEN extra actieknoppen hier -->
+    <!-- Primaire CTA (gecentreerd) -->
+    <section class="actions actions--center">
+      <button id="btn-generate" class="btn btn-primary btn-primary--xl">Maak dossier</button>
     </section>
 
-    <!-- Contactkanaal -->
-    <section class="channel">
-      <h3>Contactkanaal</h3>
-      <div class="radio-row">
-        <label class="radio">
-          <input type="radio" name="channel" value="email" checked />
-          <span>E-mail</span>
-        </label>
-        <label class="radio">
-          <input type="radio" name="channel" value="pb" />
-          <span>Persoonlijk bericht (PB/DM)</span>
-        </label>
-        <label class="radio">
-          <input type="radio" name="channel" value="phone" />
-          <span>Telefoon (script)</span>
-        </label>
-        <label class="radio">
-          <input type="radio" name="channel" value="letter" />
-          <span>Brief</span>
-        </label>
+    <!-- Loader (spinner maroon) -->
+    <section id="loader" class="loader" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="spinner-label">Dossier wordt opgebouwd…</div>
+    </section>
+
+    <!-- Contactkanaal & taalkeuze (per ontvanger) -->
+    <section class="channel channel--separated">
+      <h3>Contactkanaal & taal</h3>
+
+      <div class="recipient">
+        <h4>Notaris</h4>
+        <div class="row">
+          <div class="radio-row" data-recipient="notary">
+            <label class="radio"><input type="radio" name="channel-notary" value="email" checked /><span>E-mail</span></label>
+            <label class="radio"><input type="radio" name="channel-notary" value="pb"/><span>Pers. bericht (PB/DM)</span></label>
+            <label class="radio"><input type="radio" name="channel-notary" value="phone"/><span>Telefoon (script)</span></label>
+            <label class="radio"><input type="radio" name="channel-notary" value="letter"/><span>Brief</span></label>
+          </div>
+          <label class="select">
+            <span>Taal</span>
+            <select id="lang-notary">
+              <option value="fr" selected>Frans</option>
+              <option value="nl">Nederlands</option>
+              <option value="en">Engels</option>
+            </select>
+          </label>
+        </div>
+        <button id="btn-notary" class="btn btn-compact">Maak bericht voor notaris</button>
       </div>
-    </section>
 
-    <!-- Compose knoppen (script.js toont pas ná analyse) -->
-    <section class="compose" hidden>
-      <h3>Direct contact</h3>
-      <div class="compose-row">
-        <button id="btn-notary" class="btn">Maak bericht voor notaris (FR)</button>
-        <button id="btn-agent"  class="btn">Maak bericht voor makelaar (NL)</button>
-        <button id="btn-seller" class="btn">Maak bericht aan verkoper (FR/NL)</button>
+      <div class="recipient">
+        <h4>Makelaar</h4>
+        <div class="row">
+          <div class="radio-row" data-recipient="agent">
+            <label class="radio"><input type="radio" name="channel-agent" value="email" checked /><span>E-mail</span></label>
+            <label class="radio"><input type="radio" name="channel-agent" value="pb"/><span>Pers. bericht (PB/DM)</span></label>
+            <label class="radio"><input type="radio" name="channel-agent" value="phone"/><span>Telefoon (script)</span></label>
+            <label class="radio"><input type="radio" name="channel-agent" value="letter"/><span>Brief</span></label>
+          </div>
+          <label class="select">
+            <span>Taal</span>
+            <select id="lang-agent">
+              <option value="nl" selected>Nederlands</option>
+              <option value="fr">Frans</option>
+              <option value="en">Engels</option>
+            </select>
+          </label>
+        </div>
+        <button id="btn-agent" class="btn btn-compact">Maak bericht voor makelaar</button>
+      </div>
+
+      <div class="recipient">
+        <h4>Verkoper</h4>
+        <div class="row">
+          <div class="radio-row" data-recipient="seller">
+            <label class="radio"><input type="radio" name="channel-seller" value="email" checked /><span>E-mail</span></label>
+            <label class="radio"><input type="radio" name="channel-seller" value="pb"/><span>Pers. bericht (PB/DM)</span></label>
+            <label class="radio"><input type="radio" name="channel-seller" value="phone"/><span>Telefoon (script)</span></label>
+            <label class="radio"><input type="radio" name="channel-seller" value="letter"/><span>Brief</span></label>
+          </div>
+          <label class="select">
+            <span>Taal</span>
+            <select id="lang-seller">
+              <option value="nl">Nederlands</option>
+              <option value="fr" selected>Frans</option>
+              <option value="en">Engels</option>
+            </select>
+          </label>
+        </div>
+        <button id="btn-seller" class="btn btn-compact">Maak bericht aan verkoper</button>
       </div>
     </section>
 
@@ -120,7 +160,7 @@
       <div id="letter-output" class="panel"></div>
     </section>
 
-    <!-- Disclaimer (korte versie; extra waarschuwing staat NIET op de pagina) -->
+    <!-- Korte disclaimer op de pagina -->
     <section class="disclaimer">
       <p class="muted small">
         Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme).
