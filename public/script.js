@@ -1,14 +1,13 @@
 // /public/script.js
-// Immodiagnostique – robuuste voortgang + timeouts + annuleren
-// - Per stap (commune → georisques → gpu → gpu-doc → dvf → analyse) een harde timeout (12s GET, 20s POST)
-// - Zichtbare status in spinner + klein logboek (#progress-log)
-// - “Annuleer” stopt alle lopende requests en reset netjes
-// - Compose/Export pas zichtbaar na analyse
-// - Alleen /api/* calls (nooit direct naar externe sites)
+// Immodiagnostique – solide UI-flow met voortgang, timeouts, annuleren, export en compose
+// Alle fetches uitsluitend via /api/*
+// Timeouts: 12s (GET) / 20s (POST). Bij 429 meldt UI throttling.
+// Spinner + statusregels + klein logboek (#progress-log)
+// “Annuleer” breekt lopende requests af en reset spinner.
+// Compose/Export worden pas actief na succesvolle analyse.
 
-// ========== Boot ==========
 window.addEventListener('DOMContentLoaded', () => {
-  const $  = (s) => document.querySelector(s);
+  const $ = (s) => document.querySelector(s);
 
   // Invoer
   const adLinkEl   = $('#adLink');
@@ -20,9 +19,10 @@ window.addEventListener('DOMContentLoaded', () => {
   const adTextEl   = $('#adText');
 
   // UI
-  const btnPrimary    = $('#btn-generate');
-  const loader        = $('#loader');            // bevat .spinner-label
-  const logArea       = $('#progress-log');      // optioneel <div id="progress-log"></div> in HTML
+  const btnGenerate   = $('#btn-generate');
+  const loader        = $('#loader');                 // bevat .spinner + .spinner-label
+  const spinnerLabel  = loader?.querySelector('.spinner-label');
+  const logArea       = $('#progress-log');           // optioneel, netjes
   const dossierPanel  = $('#dossier-panel');
   const dossierOut    = $('#dossier-output');
   const overviewPanel = $('#overview-panel');
@@ -30,33 +30,29 @@ window.addEventListener('DOMContentLoaded', () => {
   const letterPanel   = $('#letter-panel');
   const letterOut     = $('#letter-output');
 
-  // Compose-knoppen (optioneel aanwezig)
+  // Compose-knoppen
   const btnNotary = $('#btn-notary');
   const btnAgent  = $('#btn-agent');
   const btnSeller = $('#btn-seller');
 
-  // ========== State voor annuleren ==========
-  let runId = 0;                  // verhoogt bij elke run
-  let activeControllers = [];     // AbortControllers van lopende requests
-
-  function resetActiveControllers() {
+  // Annuleren
+  let runId = 0;
+  let activeControllers = [];
+  function resetControllers() {
     try { activeControllers.forEach(c => c.abort()); } catch {}
     activeControllers = [];
   }
 
-  // ========== Helpers ==========
-  const sanitize = (s) => String(s || '').trim();
+  // Helpers
+  const sanitize = (s) => String(s ?? '').trim();
   const escapeHtml = (str = '') =>
     str.replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
-  const escapeAttr = (v) => escapeHtml(String(v || ''));
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-  function fmtMoney(n) {
+  const escapeAttr = (v) => escapeHtml(String(v ?? ''));
+  const fmtMoney = (n) => {
     if (n == null || n === '') return '—';
-    try {
-      return new Intl.NumberFormat('nl-NL', { style:'currency', currency:'EUR', maximumFractionDigits:0 }).format(Number(n));
-    } catch { return String(n); }
-  }
+    try { return new Intl.NumberFormat('nl-NL', { style:'currency', currency:'EUR', maximumFractionDigits:0 }).format(Number(n)); }
+    catch { return String(n); }
+  };
 
   function buildFullAddress({ number, street, postcode, city }) {
     const parts = [];
@@ -67,17 +63,16 @@ window.addEventListener('DOMContentLoaded', () => {
     return parts.join(' ') || '—';
   }
 
-  // ========== Loader / status / log ==========
-  function setSpinner(msg){
-    if (!loader) return;
-    const label = loader.querySelector('.spinner-label');
-    if (label) label.textContent = msg || 'Bezig…';
-    loader.removeAttribute('hidden');
+  // Spinner + log
+  function showSpinner(msg) {
+    if (spinnerLabel) spinnerLabel.textContent = msg || 'Bezig…';
+    loader?.removeAttribute('hidden');
     appendLog(msg || 'Bezig…');
   }
-  function hideSpinner(){ loader?.setAttribute('hidden',''); }
-
-  function appendLog(line){
+  function hideSpinner() {
+    loader?.setAttribute('hidden', '');
+  }
+  function appendLog(line) {
     if (!logArea || !line) return;
     const p = document.createElement('div');
     p.className = 'small muted';
@@ -85,81 +80,82 @@ window.addEventListener('DOMContentLoaded', () => {
     logArea.appendChild(p);
     while (logArea.childNodes.length > 12) logArea.removeChild(logArea.firstChild);
   }
-  function clearLog(){ if (logArea) logArea.innerHTML = ''; }
+  function clearLog() { if (logArea) logArea.innerHTML = ''; }
 
-  // ========== HTTP met timeout ==========
+  // HTTP met timeout
   function withTimeout(ms, fetcher) {
     const controller = new AbortController();
     activeControllers.push(controller);
-    const timer = setTimeout(() => controller.abort(new DOMException('TimeoutError','AbortError')), ms);
-    return fetcher(controller.signal).finally(() => clearTimeout(timer));
+    const timer = setTimeout(() => {
+      try { controller.abort(); } catch {}
+    }, ms);
+    return fetcher(controller.signal)
+      .finally(() => clearTimeout(timer));
   }
 
-  async function getJson(url, labelForStatus) {
-    setSpinner(labelForStatus || 'Bezig…');
+  async function getJson(url, label) {
+    showSpinner(label || 'Bezig…');
     try {
       const data = await withTimeout(12000, async (signal) => {
-        const res = await fetch(url, { headers: { 'Accept':'application/json' }, signal });
-        const ct = res.headers.get('content-type')||'';
-        const json = ct.includes('application/json') ? await res.json() : null;
-        if (!res.ok || !json?.ok) {
-          const err = new Error((json && (json.error||json.message)) || `HTTP ${res.status}`);
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' }, signal });
+        const isJson = (res.headers.get('content-type') || '').includes('application/json');
+        const body = isJson ? await res.json() : null;
+        if (!res.ok || !body?.ok) {
+          const msg = (body && (body.error || body.message)) || `HTTP ${res.status}`;
+          const err = new Error(msg);
           err.status = res.status;
           throw err;
         }
-        return json;
+        return body;
       });
-      appendLog(`✔ ${labelForStatus || url}`);
+      appendLog(`✔ ${label || url}`);
       return data;
     } catch (e) {
       if (e?.name === 'AbortError') {
-        appendLog(`⏱ Timeout bij ${labelForStatus || url}`);
+        appendLog(`⏱ Timeout bij ${label || url}`);
         return null;
       }
-      appendLog(`✖ Fout bij ${labelForStatus || url}: ${(e && e.message) || 'onbekend'}`);
+      appendLog(`✖ Fout bij ${label || url}: ${e.message || 'onbekend'}`);
       return null;
     }
   }
 
-  async function postJson(url, payload, labelForStatus) {
-    setSpinner(labelForStatus || 'Bezig…');
+  async function postJson(url, payload, label) {
+    showSpinner(label || 'Bezig…');
     try {
       const data = await withTimeout(20000, async (signal) => {
         const res = await fetch(url, {
-          method:'POST',
-          headers: { 'Content-Type':'application/json; charset=utf-8' },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
           body: JSON.stringify(payload),
           signal
         });
         const ct = res.headers.get('content-type') || '';
         const isJson = ct.includes('application/json');
         const body = isJson ? await res.json() : await res.text();
-
         if (!res.ok) {
-          if (res.status === 429) {
-            appendLog('↻ 429 throttled – backoff is server-side toegepast');
-          }
-          const errMsg = (isJson && (body.error || body.message)) || `HTTP ${res.status}`;
-          const e = new Error(errMsg);
-          e.detail = isJson ? JSON.stringify(body) : String(body);
-          e.status = res.status;
-          throw e;
+          if (res.status === 429) appendLog('↻ 429 throttled – server-side backoff toegepast');
+          const msg = (isJson && (body.error || body.message)) || `HTTP ${res.status}`;
+          const err = new Error(msg);
+          err.status = res.status;
+          err.detail = isJson ? JSON.stringify(body) : String(body);
+          throw err;
         }
-        appendLog(`✔ ${labelForStatus || url}`);
+        appendLog(`✔ ${label || url}`);
         return body;
       });
       return data;
     } catch (e) {
       if (e?.name === 'AbortError') {
-        appendLog(`⏹ Afgebroken: ${labelForStatus || url}`);
+        appendLog(`⏹ Afgebroken: ${label || url}`);
         throw e;
       }
-      appendLog(`✖ Fout bij ${labelForStatus || url}: ${e.message || 'onbekend'}`);
+      appendLog(`✖ Fout bij ${label || url}: ${e.message || 'onbekend'}`);
       throw e;
     }
   }
 
-  // ========== Rendering ==========
+  // Rendering
   function renderDossier(values) {
     const fullAddr = buildFullAddress(values);
     dossierOut.innerHTML = `
@@ -168,7 +164,10 @@ window.addEventListener('DOMContentLoaded', () => {
           <strong>1. Officieel adres / advertentie</strong>
           <div class="box">
             <div><em>Invoer:</em><br>${escapeHtml(fullAddr)}</div>
-            ${values.price ? `<div class="note">Vraagprijs: <strong>${escapeHtml(values.price)}</strong> <span class="small muted">(facultatief maar aanbevolen)</span></div>` : '<div class="small muted">Vraagprijs: — <span>(facultatief maar aanbevolen)</span></div>'}
+            ${values.price
+              ? `<div class="note">Vraagprijs: <strong>${escapeHtml(values.price)}</strong> <span class="small muted">(facultatief maar aanbevolen)</span></div>`
+              : `<div class="small muted">Vraagprijs: — <span>(facultatief maar aanbevolen)</span></div>`
+            }
             <div class="note">Exact perceel later opvragen bij notaris.</div>
             ${values.adLink ? `<div class="note">Advertentielink: <code>${escapeHtml(values.adLink)}</code></div>` : ''}
           </div>
@@ -192,8 +191,11 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   function appendOfficialSection(html) {
-    const mount = $('#official-data'); if (!mount) return;
-    const div = document.createElement('div'); div.innerHTML = html; mount.appendChild(div);
+    const mount = $('#official-data');
+    if (!mount) return;
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    mount.appendChild(div);
   }
 
   function renderCommune(c) {
@@ -246,8 +248,8 @@ window.addEventListener('DOMContentLoaded', () => {
     const items = docs.length
       ? docs.map(d => {
           const t = [d.type, d.title].filter(Boolean).join(' — ');
-          const date = d.date ? `<span class="small muted"> (${escapeHtml(d.date)})</span>` : '';
-          return `<li><a href="${escapeAttr(d.url)}" target="_blank" rel="noopener">${escapeHtml(t || 'Document')}</a>${date}</li>`;
+          const dt = d.date ? ` <span class="small muted">(${escapeHtml(d.date)})</span>` : '';
+          return `<li><a href="${escapeAttr(d.url)}" target="_blank" rel="noopener">${escapeHtml(t || 'Document')}</a>${dt}</li>`;
         }).join('')
       : '<li class="muted">Geen documenten via API gevonden.</li>';
     appendOfficialSection(`
@@ -286,7 +288,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   function renderSWOT(swot) {
     const s = swot || { sterke_punten:[], mogelijke_zorgpunten:[], mogelijke_kansen:[], mogelijke_bedreigingen:[] };
-    const box = (title, items, extra='') => `
+    const cell = (title, items, extra='') => `
       <div class="swot-cell ${extra}">
         <h4>${title}</h4>
         ${items?.length ? `<ul>${items.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>` : '<p class="muted">—</p>'}
@@ -296,10 +298,10 @@ window.addEventListener('DOMContentLoaded', () => {
       <section>
         <h3>SWOT-matrix</h3>
         <div class="swot-grid">
-          ${box('Sterke punten', s.sterke_punten, 'ok')}
-          ${box('Mogelijke zorgpunten', s.mogelijke_zorgpunten, 'warn')}
-          ${box('Mogelijke kansen', s.mogelijke_kansen)}
-          ${box('Mogelijke bedreigingen', s.mogelijke_bedreigingen, 'warn')}
+          ${cell('Sterke punten', s.sterke_punten, 'ok')}
+          ${cell('Mogelijke zorgpunten', s.mogelijke_zorgpunten, 'warn')}
+          ${cell('Mogelijke kansen', s.mogelijke_kansen)}
+          ${cell('Mogelijke bedreigingen', s.mogelijke_bedreigingen, 'warn')}
         </div>
       </section>
     `;
@@ -307,16 +309,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   function renderOverview(result) {
     const out = result?.output || {};
-    const model = result?.model;
     const throttle = result?.throttleNotice;
-
-    const warningBlock = `
-      <div class="alert warn small">
-        <strong>Let op:</strong> voorkom een overhaaste “coup de cœur”. Weeg rustig af, bepaal totale acquisitiekosten
-        (incl. makelaar en notaris) en plan verbouwingskosten realistisch in. Tip: de koper kan een eigen notaris kiezen;
-        de cumulatieve notariskosten blijven doorgaans gelijk.
-      </div>
-    `;
 
     const vragen = [
       ...(out.communicatie?.verkoper || []),
@@ -326,20 +319,24 @@ window.addEventListener('DOMContentLoaded', () => {
 
     overviewOut.innerHTML = `
       ${throttle ? `<div class="alert warn">Throttling door Gemini; backoff toegepast. (${escapeHtml(throttle)})</div>` : ''}
-      <div class="small muted">Model: <code>${escapeHtml(model || '')}</code> · ${new Date().toLocaleString()}</div>
+      <div class="small muted">Model: <code>${escapeHtml(result?.model || '')}</code> · ${new Date().toLocaleString()}</div>
       ${renderSWOT(out.swot)}
       <h3>Actieplan</h3>
       ${out.actieplan?.length ? `<ul>${out.actieplan.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>` : '<p class="muted">—</p>'}
       <h3>Vragen & Communicatie</h3>
       ${vragen.length ? `<ul>${vragen.map(v => `<li>${escapeHtml(v)}</li>`).join('')}</ul>` : '<p class="muted">—</p>'}
-      ${warningBlock}
+      <div class="alert warn small">
+        <strong>Let op:</strong> voorkom een overhaaste “coup de cœur”. Weeg rustig af, bepaal totale acquisitiekosten
+        (incl. makelaar en notaris) en plan verbouwingskosten realistisch in. Tip: de koper kan een eigen notaris kiezen;
+        de cumulatieve notariskosten blijven doorgaans gelijk.
+      </div>
     `;
     overviewPanel?.removeAttribute('hidden');
     overviewPanel.scrollIntoView({ behavior:'smooth', block:'start' });
   }
 
-  // ========== Data-opbouw ==========
-  async function fetchCommune(city, postcode){
+  // Data ophalen
+  async function fetchCommune(city, postcode) {
     const qs = new URLSearchParams(); if (city) qs.set('city', city); if (postcode) qs.set('postcode', postcode);
     return await getJson(`/api/commune?${qs.toString()}`, 'Raadpleegt gemeente…');
   }
@@ -351,9 +348,7 @@ window.addEventListener('DOMContentLoaded', () => {
   function buildSignals(values, summary) {
     const s = {};
     if (values.price && !Number.isNaN(Number(values.price))) s.price = Number(values.price);
-    if (summary?.dvf?.summary?.total?.median_price) {
-      s.dvf = { median_price: Number(summary.dvf.summary.total.median_price) };
-    }
+    if (summary?.dvf?.summary?.total?.median_price) s.dvf = { median_price: Number(summary.dvf.summary.total.median_price) };
     if (summary?.georisques?.summary) {
       const flags = {}; for (const item of summary.georisques.summary) flags[item.key] = !!item.present;
       s.georisques = flags;
@@ -377,6 +372,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const { adLink, city, price, postcode, street, number, adText } = values;
     const fullAddr = buildFullAddress({ number, street, postcode, city });
     const route = (street || number || postcode) ? 'Route B (adres bekend)' : 'Route A (geen adres)';
+
     const lines = [];
     lines.push(`[${route}]`, '');
     lines.push('1) Officieel adres / advertentie');
@@ -395,8 +391,8 @@ window.addEventListener('DOMContentLoaded', () => {
       lines.push(`PLU (zone-urba): ${z.length ? `${z.length} zones` : 'geen polygonen gevonden'}`);
     }
     if (summary?.dvf?.summary?.total) {
-      const tot = summary.dvf.summary.total;
-      lines.push(`DVF (indicatief): transacties=${tot.count}, mediaan prijs≈${fmtMoney(tot.median_price)}, mediaan €/m²≈${fmtMoney(tot.median_eur_m2)}`);
+      const t = summary.dvf.summary.total;
+      lines.push(`DVF (indicatief): transacties=${t.count}, mediaan prijs≈${fmtMoney(t.median_price)}, mediaan €/m²≈${fmtMoney(t.median_eur_m2)}`);
     }
     lines.push('', "2) Risico's (Géorisques)", 'ERP nodig (≤ 6 maanden) indien adres bekend.', '');
     lines.push('3) Verkoopprijzen (DVF)', 'DVF is op gemeenteniveau.', '');
@@ -405,7 +401,7 @@ window.addEventListener('DOMContentLoaded', () => {
     return lines.join('\n');
   }
 
-  // ========== Export ==========
+  // Export
   let btnExport = null;
   function ensureExportButtonOnce() {
     if (btnExport) return;
@@ -441,7 +437,8 @@ window.addEventListener('DOMContentLoaded', () => {
     }
     if (summary.georisques) {
       const items = (summary.georisques.summary || []).map(s => {
-        const badge = s.present ? '✅' : '—'; const cls = s.present ? 'ok' : 'muted';
+        const badge = s.present ? '✅' : '—';
+        const cls = s.present ? 'ok' : 'muted';
         return `<li><span class="badge ${cls}">${badge}</span> ${escapeHtml(s.label)}</li>`;
       }).join('') || '<li class="muted">Geen categorieën gevonden</li>';
       parts.push(`<h3>Géorisques</h3><div class="box"><ul class="badgelist">${items}</ul></div>`);
@@ -552,8 +549,8 @@ window.addEventListener('DOMContentLoaded', () => {
 </div></body></html>`;
   }
 
-  // ========== Input verzamelen ==========
-  function collectInput(){
+  // Input
+  function collectInput() {
     return {
       adLink:   sanitize(adLinkEl?.value),
       city:     sanitize(cityEl?.value),
@@ -565,12 +562,12 @@ window.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  // ========== End-to-end genereren ==========
+  // Orkestratie
   async function fetchSummarySequential(city, postcode) {
     const combined = { ok:true, input:{ city, postcode } };
 
     const comm = await fetchCommune(city, postcode);
-    if (!comm?.commune) return combined; // zonder INSEE heeft vervolg weinig zin
+    if (!comm?.commune) return combined; // zonder INSEE geen vervolg
     combined.commune = comm.commune; renderCommune(comm.commune);
 
     const insee = combined.commune.insee;
@@ -587,25 +584,25 @@ window.addEventListener('DOMContentLoaded', () => {
 
   async function handleGenerate(thisRunId) {
     clearLog();
-    setSpinner('Dossier wordt opgebouwd…');
+    showSpinner('Dossier wordt opgebouwd…');
 
     const values = collectInput();
     if (!values.city) { alert('Plaatsnaam is verplicht.'); cityEl?.focus(); hideSpinner(); return; }
 
     // Reset panels
     dossierPanel?.removeAttribute('hidden');
-    overviewPanel?.setAttribute('hidden','');
-    letterPanel?.setAttribute('hidden','');
+    overviewPanel?.setAttribute('hidden', '');
+    letterPanel?.setAttribute('hidden', '');
     $('#official-data')?.replaceChildren();
 
     renderDossier(values);
 
     // 1) Officiële bronnen
     const summary = await fetchSummarySequential(values.city, values.postcode);
-    if (thisRunId !== runId) return; // geannuleerd/nieuwe run gestart
+    if (thisRunId !== runId) return; // geannuleerd
 
     // 2) Analyse
-    setSpinner('Genereert AI-analyse…');
+    showSpinner('Genereert AI-analyse…');
     overviewOut.innerHTML = `<div class="alert info">Analyse wordt gegenereerd…</div>`;
     overviewPanel?.removeAttribute('hidden');
 
@@ -614,18 +611,18 @@ window.addEventListener('DOMContentLoaded', () => {
 
     try {
       const result = await postJson('/api/analyse', { dossier: dossierText, signals }, 'Analyseert (Gemini)…');
-      if (thisRunId !== runId) return; // geannuleerd
+      if (thisRunId !== runId) return;
       renderOverview(result);
       ensureExportButtonOnce();
     } catch (err) {
-      if (err?.name === 'AbortError') return; // netjes geannuleerd
+      if (err?.name === 'AbortError') return;
       overviewOut.innerHTML = `<div class="alert error"><strong>Fout tijdens AI-analyse:</strong> ${escapeHtml(err.message)}</div>`;
     } finally {
       hideSpinner();
     }
   }
 
-  // ========== Annuleer-knop ==========
+  // Annuleer-knop
   let cancelBtn = null;
   function ensureCancelButton() {
     if (cancelBtn) return;
@@ -635,8 +632,8 @@ window.addEventListener('DOMContentLoaded', () => {
     cancelBtn.textContent = 'Annuleer';
     cancelBtn.addEventListener('click', () => {
       appendLog('Gebruiker annuleert de huidige run');
-      resetActiveControllers();
-      runId++; // invalideer alle lopende promises
+      resetControllers();
+      runId++; // invalideer promises
       hideSpinner();
     });
     const actions = document.querySelector('.actions');
@@ -644,24 +641,23 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   ensureCancelButton();
 
-  // ========== Event handlers ==========
+  // Events
   let running = false;
-  btnPrimary?.addEventListener('click', async () => {
+  btnGenerate?.addEventListener('click', async () => {
     if (running) return;
     try {
       running = true;
-      runId++; // nieuwe run
-      resetActiveControllers();
-      btnPrimary.classList.add('is-loading'); btnPrimary.disabled = true;
+      runId++;
+      resetControllers();
+      btnGenerate.classList.add('is-loading'); btnGenerate.disabled = true;
       ensureCancelButton();
       await handleGenerate(runId);
     } finally {
-      btnPrimary.classList.remove('is-loading'); btnPrimary.disabled = false;
+      btnGenerate.classList.remove('is-loading'); btnGenerate.disabled = false;
       running = false;
     }
   });
 
-  // Compose (na analyse)
   function getChannelFor(rec){
     const group = document.querySelector(`.radio-row[data-recipient="${rec}"]`);
     const checked = group?.querySelector('input[type="radio"]:checked');
@@ -701,7 +697,7 @@ window.addEventListener('DOMContentLoaded', () => {
   btnAgent ?.addEventListener('click', onCompose('agent-nl','agent'));
   btnSeller?.addEventListener('click', onCompose('seller-mixed','seller'));
 
-  // ========== Defensieve logging ==========
+  // Defensieve logging
   window.addEventListener('error', (e) => appendLog(`JS-error: ${e.message || e.type}`));
   window.addEventListener('unhandledrejection', (e) => appendLog(`Promise-reject: ${(e.reason && e.reason.message) || String(e.reason)}`));
 });
