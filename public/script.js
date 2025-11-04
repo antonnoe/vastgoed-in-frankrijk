@@ -1,9 +1,9 @@
 // /public/script.js
 // IMMODIAGNOSTIQUE front-end orchestration
 // - Alle externe calls lopen via /api/*
-// - Showpiece voortgang met pipeline + “slow demo” (?demo=slow)
-// - Contactkanaal + taal per ontvanger; knoptekst past zich aan
-// - Resultaatpaneel met nette URL-weergave en “Exporteer rapport”
+// - Showpiece voortgang met pipeline + “slow demo” via ?demo=slow
+// - Spinner stopt correct na afloop of bij annuleren
+// - Compose rol-mapping beperkt tot: notary-fr, agent-nl, seller-mixed
 
 (() => {
   "use strict";
@@ -56,7 +56,10 @@
   let runId = 0;
   let abortControllers = [];
   let slowDemo = new URLSearchParams(location.search).get("demo") === "slow";
-  const MIN_STEP_MS = slowDemo ? 800 : 0; // UI-only ‘slow’ show; backend blijft snel
+  const MIN_STEP_MS = slowDemo ? 800 : 0; // UI-only ‘slow’ show
+
+  // Wanneer INSEE ontbreekt, willen we 1 samengevoegde log in plaats van 4 losse.
+  let quietSkips = false;
 
   // ---------- Utilities ----------
   function cleanUrl(raw) {
@@ -92,6 +95,15 @@
   function setSpinnerLabel(text) {
     els.spinnerLabel.textContent = text;
   }
+  function stopSpinner() {
+    // stop animatie, maar laat de tekst “Klaar.” staan
+    els.spinner?.classList.add("hidden");
+    setSpinnerLabel("Klaar.");
+  }
+  function startSpinner(initial = "Dossier wordt opgebouwd…") {
+    els.spinner?.classList.remove("hidden");
+    setSpinnerLabel(initial);
+  }
 
   function setStepState(stepKey, state, metaText = "") {
     const li = $(`.pipe-step[data-step="${stepKey}"]`, els.pipeline);
@@ -109,7 +121,7 @@
       if (meta) meta.textContent = "";
     });
     els.log.innerHTML = "";
-    setSpinnerLabel("Wachten op start…");
+    startSpinner("Wachten op start…");
   }
 
   function show(el) { el.hidden = false; }
@@ -163,21 +175,18 @@
     const adText = els.adText.value.trim();
     if (adText) parts.push(`Advertentietekst: ${adText.slice(0, 2000)}`);
 
-    if (!addr && !advert && !adText) {
-      // minimale context
-      if (city) parts.push(`Plaats: ${city}`);
+    if (!addr && !advert && !adText && city) {
+      parts.push(`Plaats: ${city}`);
     }
     parts.push(`Exact perceelnummer later bij de notaris opvragen.`);
     return parts.join("\n");
   }
 
   function extractSignals(summary) {
-    // Minimalistische signalen op basis van summary-API en UI
     const sig = {};
     const priceN = Number(els.price.value);
     if (!isNaN(priceN)) sig.price = priceN;
 
-    // DVF (onze /api/dvf geeft vaak summary=null; we geven alleen placeholder)
     if (summary?.dvf) {
       sig.dvf = {};
       if (typeof summary.dvf.median_price === "number") {
@@ -185,13 +194,9 @@
       }
     }
 
-    // Géorisques
     if (summary?.georisques?.summary) {
       const map = {};
-      summary.georisques.summary.forEach(it => {
-        // it.present === true betekent risico aanwezig; false = geen risico
-        map[it.key] = !!it.present;
-      });
+      summary.georisques.summary.forEach(it => { map[it.key] = !!it.present; });
       sig.georisques = {
         flood: !!map.flood,
         seismic: !!map.seismic,
@@ -201,40 +206,33 @@
       };
     }
 
-    // Advertentie: simpele keywords
     const adText = (els.adText.value || "").toLowerCase();
     const kw = [];
     ["travaux", "travaux à prévoir", "isolation", "double vitrage", "à rénover", "to renovate"].forEach(k => {
       if (adText.includes(k)) kw.push(k);
     });
-
-    // towns uit advertentietekst heuristiek (zeer lichtgewicht, helpt de AI iets)
     const towns = [];
     const townHints = ["-sur-mer", "montreuil", "berck", "nice", "lyon", "paris", "bordeaux", "nantes", "lille"];
-    townHints.forEach(h => {
-      if (adText.includes(h)) towns.push(h);
-    });
-
+    townHints.forEach(h => { if (adText.includes(h)) towns.push(h); });
     const near_water = /(mer|plage|rivière|canal|fleuve|étang|port)\b/i.test(adText);
+
     sig.advertentie = {
       keywords: kw,
       towns,
       near_water,
       truncated: /lire plus|lees meer|read more/i.test(adText)
     };
-
     return sig;
   }
 
   // ---------- Pipeline steps ----------
   async function stepCommune(ctx) {
-    const { city, postcode } = ctx.input;
-    setSpinnerLabel("Dossier wordt opgebouwd…");
+    startSpinner("Dossier wordt opgebouwd…");
     setStepState("commune", "active", "");
     pushLog("Raadpleegt gemeente…");
     const qs = new URLSearchParams();
-    if (city) qs.set("city", city);
-    if (postcode) qs.set("postcode", postcode);
+    if (ctx.input.city) qs.set("city", ctx.input.city);
+    if (ctx.input.postcode) qs.set("postcode", ctx.input.postcode);
     const url = `/api/commune?${qs.toString()}`;
     const t0 = performance.now();
     const json = await fetchJSON(url, {}, "commune");
@@ -247,48 +245,48 @@
 
   async function stepGPU(ctx) {
     setStepState("gpu", "active");
-    pushLog("Raadpleegt GPU (zonering)...");
     if (!ctx.insee) {
       setStepState("gpu", "done", "Geen INSEE → overgeslagen");
-      pushLog("ℹ Geen INSEE: slaat GPU over", "warn");
+      if (!quietSkips) pushLog("ℹ Geen INSEE: slaat GPU over", "warn");
       return { gpu: null };
     }
+    if (!quietSkips) pushLog("Raadpleegt GPU (zonering)...");
     const url = `/api/gpu?insee=${encodeURIComponent(ctx.insee)}`;
     const t0 = performance.now();
     const json = await fetchJSON(url, {}, "gpu");
     const dt = Math.max(MIN_STEP_MS - (performance.now() - t0), 0);
     if (dt) await sleep(dt);
     setStepState("gpu", "done", (json?.zones?.length || 0) + " zone(s)");
-    pushLog("✔ GPU gereed", "ok");
+    if (!quietSkips) pushLog("✔ GPU gereed", "ok");
     return { gpu: json };
   }
 
   async function stepGPUDoc(ctx) {
     setStepState("gpudoc", "active");
-    pushLog("Haalt GPU-documenten op...");
     if (!ctx.insee) {
       setStepState("gpudoc", "done", "Geen INSEE → overgeslagen");
-      pushLog("ℹ Geen INSEE: slaat GPU-docs over", "warn");
+      if (!quietSkips) pushLog("ℹ Geen INSEE: slaat GPU-docs over", "warn");
       return { gpudoc: null };
     }
+    if (!quietSkips) pushLog("Haalt GPU-documenten op...");
     const url = `/api/gpu-doc?insee=${encodeURIComponent(ctx.insee)}`;
     const t0 = performance.now();
     const json = await fetchJSON(url, {}, "gpudoc");
     const dt = Math.max(MIN_STEP_MS - (performance.now() - t0), 0);
     if (dt) await sleep(dt);
     setStepState("gpudoc", "done", (json?.documents?.length || 0) + " document(en)");
-    pushLog("✔ GPU-documenten gereed", "ok");
+    if (!quietSkips) pushLog("✔ GPU-documenten gereed", "ok");
     return { gpudoc: json };
   }
 
   async function stepDVF(ctx) {
     setStepState("dvf", "active");
-    pushLog("Controleert DVF (verkoopprijzen)...");
     if (!ctx.insee) {
       setStepState("dvf", "done", "Geen INSEE → overgeslagen");
-      pushLog("ℹ Geen INSEE: slaat DVF over", "warn");
+      if (!quietSkips) pushLog("ℹ Geen INSEE: slaat DVF over", "warn");
       return { dvf: null };
     }
+    if (!quietSkips) pushLog("Controleert DVF (verkoopprijzen)...");
     const url = `/api/dvf?insee=${encodeURIComponent(ctx.insee)}`;
     const t0 = performance.now();
     const json = await fetchJSON(url, {}, "dvf");
@@ -296,18 +294,18 @@
     if (dt) await sleep(dt);
     const note = json?.summary ? "Samenvatting aanwezig" : (json?.note || "—");
     setStepState("dvf", "done", note);
-    pushLog("✔ DVF gecontroleerd", "ok");
+    if (!quietSkips) pushLog("✔ DVF gecontroleerd", "ok");
     return { dvf: json };
   }
 
   async function stepGeorisques(ctx) {
     setStepState("georisques", "active");
-    pushLog("Checkt Géorisques (risico’s)...");
     if (!ctx.insee) {
       setStepState("georisques", "done", "Geen INSEE → overgeslagen");
-      pushLog("ℹ Geen INSEE: slaat Géorisques over", "warn");
+      if (!quietSkips) pushLog("ℹ Geen INSEE: slaat Géorisques over", "warn");
       return { georisques: null };
     }
+    if (!quietSkips) pushLog("Checkt Géorisques (risico’s)...");
     const url = `/api/georisques?insee=${encodeURIComponent(ctx.insee)}`;
     const t0 = performance.now();
     const json = await fetchJSON(url, {}, "georisques");
@@ -315,7 +313,7 @@
     if (dt) await sleep(dt);
     const count = Array.isArray(json?.summary) ? json.summary.length : 0;
     setStepState("georisques", "done", `${count} categorieën`);
-    pushLog("✔ Géorisques gecheckt", "ok");
+    if (!quietSkips) pushLog("✔ Géorisques gecheckt", "ok");
     return { georisques: json };
   }
 
@@ -328,24 +326,22 @@
     const signals = extractSignals(ctx.summary);
 
     const t0 = performance.now();
-    const body = JSON.stringify({ dossier, signals });
     const json = await fetchJSON("/api/analyse", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body
+      body: JSON.stringify({ dossier, signals })
     }, "analyse");
     const dt = Math.max(MIN_STEP_MS - (performance.now() - t0), 0);
     if (dt) await sleep(dt);
 
     setStepState("ai", "done", json?.model || "—");
     pushLog("✔ Analyse gereed", "ok");
-    setSpinnerLabel("Klaar.");
-
+    stopSpinner(); // <<< belangrijk: spinner echt stoppen
     return { analysis: json };
   }
 
   // ---------- Rendering ----------
-  function renderKeyFacts(ctx) {
+  function renderKeyFacts() {
     const rows = [];
     const addrParts = [
       els.housenr.value.trim(),
@@ -365,9 +361,7 @@
       const short = cleanUrl(raw);
       const v = document.createElement("span");
       const a = document.createElement("a");
-      a.href = raw;
-      a.target = "_blank";
-      a.rel = "noopener";
+      a.href = raw; a.target = "_blank"; a.rel = "noopener";
       a.textContent = short;
       const btn = document.createElement("button");
       btn.className = "link-mini";
@@ -395,26 +389,20 @@
       kk.textContent = k;
       const vv = document.createElement("span");
       vv.className = "v";
-      if (v instanceof HTMLElement) {
-        vv.appendChild(v);
-      } else {
-        vv.textContent = v;
-      }
-      // grid layout: two columns
+      if (v instanceof HTMLElement) vv.appendChild(v);
+      else vv.textContent = v;
+
       const grid = document.createElement("div");
-      grid.style.display = "contents"; // preserve grid from parent
+      grid.style.display = "contents";
       const kCell = document.createElement("div");
       const vCell = document.createElement("div");
-      kCell.appendChild(kk);
-      vCell.appendChild(vv);
-      wrap.appendChild(kCell);
-      wrap.appendChild(vCell);
+      kCell.appendChild(kk); vCell.appendChild(vv);
+      wrap.appendChild(kCell); wrap.appendChild(vCell);
       els.keyfacts.appendChild(wrap);
     });
   }
 
-  function renderEnv(summary, meta) {
-    // Badges op basis van georisques.summary
+  function renderEnv(summary) {
     els.envBadges.innerHTML = "";
     const s = summary?.georisques?.summary || [];
     const map = {
@@ -431,6 +419,7 @@
       const it = s.find(x => x.key === key);
       const badge = document.createElement("span");
       badge.className = "badge";
+      badge.style.cursor = "default"; // niet-klikbaar uiterlijk
       const label = map[key] || key;
       if (!it) {
         badge.classList.add("badge-na");
@@ -448,23 +437,14 @@
       els.envBadges.appendChild(badge);
     });
 
-    // Links
     els.envLinks.innerHTML = "";
     const links = [];
-    if (summary?.gpu?.links?.gpu_site_commune) {
-      links.push({ href: summary.gpu.links.gpu_site_commune, text: "Géoportail Urbanisme" });
-    }
-    if (summary?.georisques?.links?.commune) {
-      links.push({ href: summary.georisques.links.commune, text: "Géorisques – gemeente" });
-    }
-    if (summary?.dvf?.links?.etalab_app) {
-      links.push({ href: summary.dvf.links.etalab_app, text: "DVF – Etalab" });
-    }
+    if (summary?.gpu?.links?.gpu_site_commune) links.push({ href: summary.gpu.links.gpu_site_commune, text: "Géoportail Urbanisme" });
+    if (summary?.georisques?.links?.commune) links.push({ href: summary.georisques.links.commune, text: "Géorisques – gemeente" });
+    if (summary?.dvf?.links?.etalab_app) links.push({ href: summary.dvf.links.etalab_app, text: "DVF – Etalab" });
     links.forEach(l => {
       const a = document.createElement("a");
-      a.href = l.href;
-      a.target = "_blank";
-      a.rel = "noopener";
+      a.href = l.href; a.target = "_blank"; a.rel = "noopener";
       a.textContent = l.text;
       els.envLinks.appendChild(a);
     });
@@ -494,44 +474,45 @@
     fill(els.swot.zorg, swot?.mogelijke_zorgpunten || []);
     fill(els.swot.kansen, swot?.mogelijke_kansen || []);
     fill(els.swot.bedreigingen, swot?.mogelijke_bedreigingen || []);
-
-    // Toon waarschuwing “coup de cœur” altijd bij analyse
     show(els.coupWarning);
   }
 
   function revealContact() {
-    // zichtbaarheid + animatie + scroll
     show(els.contact);
     els.contact.classList.add("reveal");
     smoothScrollIntoView(els.contact);
   }
 
+  // ---------- Compose ----------
   function updateComposeButtonsText() {
-    // Kanaal => buttonlabel ("bericht" of "brief")
-    const map = [
+    const mapping = {
+      notary: { role: "notary-fr", fixedLang: "fr", noun: "notaris" },
+      agent:  { role: "agent-nl",  fixedLang: "nl", noun: "makelaar" },
+      seller: { role: "seller-mixed", fixedLang: "mixed", noun: "verkoper" }
+    };
+
+    [
       { who: "notary", el: els.btnComposeNotary },
-      { who: "agent", el: els.btnComposeAgent },
+      { who: "agent",  el: els.btnComposeAgent  },
       { who: "seller", el: els.btnComposeSeller }
-    ];
-    map.forEach(({ who, el }) => {
+    ].forEach(({ who, el }) => {
       const channel = $(`input[name="channel-${who}"]:checked`)?.value || "email";
-      const lang = $(`input[name="lang-${who}"]:checked`)?.value || (who === "notary" ? "fr" : who === "agent" ? "nl" : "nl");
-      const noun =
-        who === "notary" ? "notaris" :
-        who === "agent" ? "makelaar" : "verkoper";
+      const m = mapping[who];
+      const labelLang = m.fixedLang === "mixed" ? "FR/NL" : m.fixedLang.toUpperCase();
       const kind = channel === "letter" ? "brief" : "bericht";
-      const suffixLang = lang.toUpperCase();
-      el.textContent = `Maak ${kind} voor ${noun} (${suffixLang})`;
+      el.textContent = `Maak ${kind} voor ${m.noun} (${labelLang})`;
     });
   }
 
   async function composeMessage(recipient) {
-    // Bepaal kanaal + taal → rol + channel (server mag deze hints meenemen)
+    // Kanaal bepaalt alleen toon in prompt aan server; rol is gefixeerd per ontvanger
     const channel = $(`input[name="channel-${recipient}"]:checked`)?.value || "email";
-    const lang = $(`input[name="lang-${recipient}"]:checked`)?.value || (recipient === "notary" ? "fr" : recipient === "agent" ? "nl" : "nl");
-
-    const role = `${recipient}-${lang}`; // bijv. "notary-fr", "agent-nl", "seller-en"
     const dossier = buildDossierText();
+
+    const role =
+      recipient === "notary" ? "notary-fr" :
+      recipient === "agent"  ? "agent-nl"  :
+      "seller-mixed";
 
     els.composeText.textContent = "";
     show(els.composeOutput);
@@ -554,14 +535,15 @@
   async function runMakeDossier() {
     runId += 1;
     const myRun = runId;
-    abortAll(); // oude pending calls annuleren
+    abortAll();
     resetPipeline();
     show(els.btnCancel);
     hide(els.btnExport);
     hide(els.result);
     hide(els.contact);
     els.composeOutput.hidden = true;
-    setSpinnerLabel("Dossier wordt opgebouwd…");
+    startSpinner("Dossier wordt opgebouwd…");
+    quietSkips = false;
 
     const input = {
       city: els.city.value.trim(),
@@ -572,13 +554,20 @@
       setSpinnerLabel("Plaatsnaam is verplicht.");
       pushLog("Plaatsnaam ontbreekt – voer minstens de plaatsnaam in.", "err");
       hide(els.btnCancel);
+      stopSpinner();
       return;
     }
 
     try {
       // 1) Commune
       const c = await stepCommune({ input });
-      if (myRun !== runId) return; // geannuleerd
+      if (myRun !== runId) return;
+
+      // Als INSEE ontbreekt, toon één samengevoegde waarschuwing en demp de detail-logs.
+      if (!c.insee) {
+        quietSkips = true;
+        pushLog("ℹ Geen INSEE: GPU/DVF/Géorisques worden overgeslagen (basisdossier).", "warn");
+      }
 
       // 2) GPU
       const g = await stepGPU({ insee: c.insee });
@@ -605,30 +594,24 @@
         georisques: gr.georisques || null
       };
 
-      if (!summary.insee) {
-        pushLog("ℹ Geen INSEE: alleen basisdossier zonder officiële bronnen", "warn");
-      }
-
       // 6) AI analyse
       const a = await stepAI({ summary });
       if (myRun !== runId) return;
 
       // ---------- Render ----------
-      renderKeyFacts({ input, summary });
+      renderKeyFacts();
       renderEnv(summary);
       renderActieplan(a.analysis?.output?.actieplan || []);
       renderSWOT(a.analysis?.output?.swot || {});
 
-      // Toon resultaat + export + “Direct contact”
       show(els.result);
       show(els.btnExport);
       smoothScrollIntoView(els.result);
 
-      // Na render: laten we de contactsectie “wow” laten inschuiven
+      // Contact-sectie met kleine delay
       setTimeout(revealContact, 450);
 
     } catch (e) {
-      // Zoek actief stepKey via laatste 'active'
       const active = $(".pipe-step[data-state='active']");
       if (active) {
         const stepKey = active.getAttribute("data-step");
@@ -638,20 +621,18 @@
       setSpinnerLabel("Fout bij opbouwen.");
     } finally {
       hide(els.btnCancel);
+      stopSpinner(); // ensure spinner always stops
       abortControllers = [];
+      quietSkips = false;
     }
   }
 
   // ---------- Events ----------
-  els.btnGenerate?.addEventListener("click", () => {
-    runMakeDossier();
-  });
+  els.btnGenerate?.addEventListener("click", () => { runMakeDossier(); });
 
   els.btnCancel?.addEventListener("click", () => {
-    // Hard cancel van deze run
     pushLog("Gebruiker annuleert de huidige run");
     abortAll();
-    // Zet actieve stap op stop
     const active = $(".pipe-step[data-state='active']");
     if (active) {
       const title = $(".pipe-title", active)?.textContent || "Actieve stap";
@@ -660,11 +641,11 @@
     }
     setSpinnerLabel("Geannuleerd.");
     hide(els.btnCancel);
+    stopSpinner();
   });
 
   els.btnExport?.addEventListener("click", () => {
     window.print();
-    // Na print opnieuw Direct contact zichtbaar in beeld brengen
     setTimeout(() => smoothScrollIntoView(els.contact), 250);
   });
 
@@ -681,7 +662,7 @@
   });
   updateComposeButtonsText();
 
-  // Korte UX: submit op Enter in inputs → maak dossier
+  // Enter op formulier → maak dossier
   els.form?.addEventListener("submit", (e) => {
     e.preventDefault();
     els.btnGenerate?.click();
