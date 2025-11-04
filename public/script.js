@@ -1,11 +1,12 @@
 // /public/script.js
 // Immodiagnostique – robuuste voortgang + timeouts + annuleren
-// - Per stap (commune → georisques → gpu → gpu-doc → dvf → analyse) een harde timeout (12s) via AbortController
-// - Zichtbare statusregels in de spinner (“Raadpleegt …”) + mini-logboek onder de knop
-// - “Annuleer” stopt alle lopende requests en reset de UI
-// - Compose/Export pas zichtbaar na een voltooide analyse
-// - Alleen /api/* calls (nooit naar externe origin vanuit de browser)
+// - Per stap (commune → georisques → gpu → gpu-doc → dvf → analyse) een harde timeout (12s GET, 20s POST)
+// - Zichtbare status in spinner + klein logboek (#progress-log)
+// - “Annuleer” stopt alle lopende requests en reset netjes
+// - Compose/Export pas zichtbaar na analyse
+// - Alleen /api/* calls (nooit direct naar externe sites)
 
+// ========== Boot ==========
 window.addEventListener('DOMContentLoaded', () => {
   const $  = (s) => document.querySelector(s);
 
@@ -19,15 +20,15 @@ window.addEventListener('DOMContentLoaded', () => {
   const adTextEl   = $('#adText');
 
   // UI
-  const btnPrimary   = $('#btn-generate');
-  const loader       = $('#loader');            // bevat .spinner-label
-  const logArea      = $('#progress-log');      // optioneel <div id="progress-log"></div> in HTML
-  const dossierPanel = $('#dossier-panel');
-  const dossierOut   = $('#dossier-output');
-  const overviewPanel= $('#overview-panel');
-  const overviewOut  = $('#overview-output');
-  const letterPanel  = $('#letter-panel');
-  const letterOut    = $('#letter-output');
+  const btnPrimary    = $('#btn-generate');
+  const loader        = $('#loader');            // bevat .spinner-label
+  const logArea       = $('#progress-log');      // optioneel <div id="progress-log"></div> in HTML
+  const dossierPanel  = $('#dossier-panel');
+  const dossierOut    = $('#dossier-output');
+  const overviewPanel = $('#overview-panel');
+  const overviewOut   = $('#overview-output');
+  const letterPanel   = $('#letter-panel');
+  const letterOut     = $('#letter-output');
 
   // Compose-knoppen (optioneel aanwezig)
   const btnNotary = $('#btn-notary');
@@ -45,14 +46,15 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // ========== Helpers ==========
   const sanitize = (s) => String(s || '').trim();
-  const escapeHtml = (str='') => str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);
+  const escapeHtml = (str = '') =>
+    str.replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   const escapeAttr = (v) => escapeHtml(String(v || ''));
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   function fmtMoney(n) {
     if (n == null || n === '') return '—';
     try {
-      return new Intl.NumberFormat('nl-NL',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(Number(n));
+      return new Intl.NumberFormat('nl-NL', { style:'currency', currency:'EUR', maximumFractionDigits:0 }).format(Number(n));
     } catch { return String(n); }
   }
 
@@ -71,17 +73,16 @@ window.addEventListener('DOMContentLoaded', () => {
     const label = loader.querySelector('.spinner-label');
     if (label) label.textContent = msg || 'Bezig…';
     loader.removeAttribute('hidden');
-    appendLog(msg);
+    appendLog(msg || 'Bezig…');
   }
   function hideSpinner(){ loader?.setAttribute('hidden',''); }
 
   function appendLog(line){
-    if (!logArea) return;
+    if (!logArea || !line) return;
     const p = document.createElement('div');
     p.className = 'small muted';
     p.textContent = `${new Date().toLocaleTimeString()} · ${line}`;
     logArea.appendChild(p);
-    // houd log compact (max 12 regels)
     while (logArea.childNodes.length > 12) logArea.removeChild(logArea.firstChild);
   }
   function clearLog(){ if (logArea) logArea.innerHTML = ''; }
@@ -91,8 +92,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const controller = new AbortController();
     activeControllers.push(controller);
     const timer = setTimeout(() => controller.abort(new DOMException('TimeoutError','AbortError')), ms);
-    return fetcher(controller.signal)
-      .finally(() => clearTimeout(timer));
+    return fetcher(controller.signal).finally(() => clearTimeout(timer));
   }
 
   async function getJson(url, labelForStatus) {
@@ -190,10 +190,12 @@ window.addEventListener('DOMContentLoaded', () => {
     `;
     dossierPanel?.removeAttribute('hidden');
   }
+
   function appendOfficialSection(html) {
     const mount = $('#official-data'); if (!mount) return;
     const div = document.createElement('div'); div.innerHTML = html; mount.appendChild(div);
   }
+
   function renderCommune(c) {
     appendOfficialSection(`
       <section>
@@ -205,6 +207,7 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
+
   function renderGeorisques(gr) {
     const items = (gr.summary || []).map(s => {
       const badge = s.present ? '✅' : '—';
@@ -221,6 +224,7 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
+
   function renderGPU(gpu) {
     const z = gpu.zones || [];
     const items = z.length
@@ -236,6 +240,7 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
+
   function renderGPUDoc(gpudoc) {
     const docs = gpudoc.documents || [];
     const items = docs.length
@@ -255,6 +260,7 @@ window.addEventListener('DOMContentLoaded', () => {
       </section>
     `);
   }
+
   function renderDVF(dvf) {
     let inner = '<li class="muted">Geen samenvatting beschikbaar (gebruik links)</li>';
     if (dvf.summary?.total) {
@@ -372,12 +378,12 @@ window.addEventListener('DOMContentLoaded', () => {
     const fullAddr = buildFullAddress({ number, street, postcode, city });
     const route = (street || number || postcode) ? 'Route B (adres bekend)' : 'Route A (geen adres)';
     const lines = [];
-    lines.push(`[${route}]`,'');
-    lines.push("1) Officieel adres / advertentie");
+    lines.push(`[${route}]`, '');
+    lines.push('1) Officieel adres / advertentie');
     lines.push(`Invoer: ${fullAddr}`);
     if (price) lines.push(`Vraagprijs: ${price}`);
     if (adLink) lines.push(`Advertentielink: ${adLink}`);
-    lines.push("Exact perceelnummer later via notaris opvragen.",'');
+    lines.push('Exact perceelnummer later via notaris opvragen.', '');
 
     if (summary?.commune) lines.push(`Gemeente: ${summary.commune.name} (INSEE ${summary.commune.insee})`);
     if (summary?.georisques) {
@@ -392,11 +398,11 @@ window.addEventListener('DOMContentLoaded', () => {
       const tot = summary.dvf.summary.total;
       lines.push(`DVF (indicatief): transacties=${tot.count}, mediaan prijs≈${fmtMoney(tot.median_price)}, mediaan €/m²≈${fmtMoney(tot.median_eur_m2)}`);
     }
-    lines.push('','2) Risico\'s (Géorisques)','ERP nodig (≤ 6 maanden) indien adres bekend.','');
-    lines.push('3) Verkoopprijzen (DVF)','DVF is op gemeenteniveau.','');
-    lines.push('4) Bestemmingsplan (PLU)','Noteer zone/beperkingen via Géoportail Urbanisme (PLU/SUP).','');
+    lines.push('', "2) Risico's (Géorisques)", 'ERP nodig (≤ 6 maanden) indien adres bekend.', '');
+    lines.push('3) Verkoopprijzen (DVF)', 'DVF is op gemeenteniveau.', '');
+    lines.push('4) Bestemmingsplan (PLU)', 'Noteer zone/beperkingen via Géoportail Urbanisme (PLU/SUP).', '');
     if (adText) { lines.push('Advertentietekst (volledig):', adText); }
-    return lines.join("\n");
+    return lines.join('\n');
   }
 
   // ========== Export ==========
@@ -468,9 +474,9 @@ window.addEventListener('DOMContentLoaded', () => {
     const today = new Date().toLocaleDateString('nl-NL');
 
     const extract = (html, h3Text) => {
-      const rx = new RegExp(`<h3[^>]*>${h3Text}<\/h3>[\\s\\S]*?(?=<h3|$)`,'i');
+      const rx = new RegExp(`<h3[^>]*>${h3Text}<\/h3>[\\s\\S]*?(?=<h3|$)`, 'i');
       const m = (html || '').match(rx);
-      return m ? m[0].replace(/^<h3[^>]*>[^<]*<\/h3>/i,'').trim() : '';
+      return m ? m[0].replace(/^<h3[^>]*>[^<]*<\/h3>/i, '').trim() : '';
     };
 
     const swotSection = extract(overviewHtml, 'SWOT-matrix');
@@ -620,7 +626,6 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // ========== Annuleer-knop ==========
-  // Injecteer een kleine annuleerknop naast de primaire CTA (alleen als spinner getoond wordt)
   let cancelBtn = null;
   function ensureCancelButton() {
     if (cancelBtn) return;
@@ -656,7 +661,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Compose (laten staan; werkt alleen na analyse)
+  // Compose (na analyse)
   function getChannelFor(rec){
     const group = document.querySelector(`.radio-row[data-recipient="${rec}"]`);
     const checked = group?.querySelector('input[type="radio"]:checked');
