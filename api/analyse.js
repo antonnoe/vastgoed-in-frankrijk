@@ -1,469 +1,415 @@
-// /api/analyse.js (ESM)
-// Immodiagnostique – AI-analyse endpoint (Gemini REST, geen SDK) mét server-side SWOT-fallback
+// /api/analyse.js
+// Immodiagnostique – Analyse endpoint (POST { dossier, signals? })
 //
-// Contract:
-//   POST { dossier: string, signals?: object }
-//     - 'dossier'  = samengestelde tekst uit de UI (+ evt. samenvatting van /api/summary)
-//     - 'signals'  = object met harde signalen (prijs/DVF, georisques, gpu, dpe/isolatie, advertentie-keywords, ...)
-// Response: { ok, model, throttleNotice?, output: { ... }, meta }
+// - Gebruikt Google Gemini via REST (geen SDK).
+// - Default model: gemini-2.0-flash; fallbacks: gemini-2.0-flash (retry) → gemini-1.5-flash-latest.
+// - JSON body: {contents:[{parts:[{text:"..."}]}]}.
+// - Rate limits: 1 req/sec, max 8 req/min (dit endpoint doet 1 call per verzoek).
+// - Bij 429: backoff 2s, daarna 4s.
+// - Verwerkt 'signals' (prijs, DVF, Géorisques, advertentie.towns/near_water/truncated, etc.).
+// - Nooit API key naar de client lekken.
 //
-// Belangrijk:
-// - Alle externe AI-calls via server (hier), nooit vanuit de browser.
-// - Rate limit: 1 req/sec; max 8 req/min (best-effort, per instance).
-// - 429 → backoff 2s, dan 4s. Max 3 pogingen.
-// - 404/NOT_FOUND → fallback model: gemini-2.0-flash → gemini-1.5-flash-latest.
-// - Env var: GEMINI_API_KEY (exacte naam).
-// - Default taal: Nederlands (UI-copy NL).
-//
-// Nieuw in deze versie:
-// - Deterministische server-side fallback voor SWOT (4 lijsten) + basis-actieplan/communicatie
-//   wanneer het model lege lijsten terugstuurt. AI blijft leidend: we vullen alleen gaten.
+// Verwacht output:
+// {
+//   ok: true,
+//   model: "gemini-2.0-flash",
+//   throttleNotice: null | "429 throttled/backoff ...",
+//   output: {
+//     swot: { sterke_punten:[], mogelijke_zorgpunten:[], mogelijke_kansen:[], mogelijke_bedreigingen:[] },
+//     actieplan: [],
+//     communicatie: { verkoper:[], notaris:[], makelaar:[] },
+//     red_flags: [], actions: [], questions: [],
+//     disclaimer: "…",
+//     raw_text: "…"
+//   },
+//   meta: { received_chars: N, signals_present: true/false, timestamp: ISO }
+// }
 
-const RATE_WINDOW_MS = 60_000;
-const MAX_PER_MINUTE = 8;
-const MIN_SPACING_MS = 1_000; // 1 req/sec
-const calls = [];
-
-const DEFAULT_MODEL_PRIMARY = "gemini-2.0-flash";
-const DEFAULT_MODEL_FALLBACK = "gemini-1.5-flash-latest";
-const ALT_MODEL = "gemini-2.0-flash"; // expliciet opnemen voor NOT_FOUND-varianten
-
-function now() { return Date.now(); }
-function pruneCalls() {
-  const cutoff = now() - RATE_WINDOW_MS;
-  while (calls.length && calls[0] < cutoff) calls.shift();
-}
-async function enforceRateLimit() {
-  pruneCalls();
-  if (calls.length >= MAX_PER_MINUTE) {
-    const waitMs = (calls[0] + RATE_WINDOW_MS) - now();
-    if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
-    pruneCalls();
-  }
-  const last = calls[calls.length - 1];
-  if (last && (now() - last) < MIN_SPACING_MS) {
-    await new Promise(r => setTimeout(r, MIN_SPACING_MS - (now() - last)));
-  }
-  calls.push(now());
-}
-
-function sendJson(res, status, payload) {
-  res.statusCode = status;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.end(JSON.stringify(payload));
-}
-const sanitize = (v) => (typeof v === "string" ? v.trim() : "");
-
-function buildPrompt(dossier, signals) {
-  const signalsJson = JSON.stringify(signals || {}, null, 2);
-  return [
-`Je bent een Nederlandstalige analysemodule voor een vastgoed-vooronderzoek in Frankrijk (Immodiagnostique).`,
-`Doel: maak een nuchtere, beknopte, **gestructureerde** analyse in JSON. Geen omslagteksten, geen codeblokken, **alleen JSON**.`,
-`Context (dossier):`,
-dossier,
-`Harde signalen (objectief, te gebruiken als leidraad – verzin geen data):`,
-signalsJson,
-`Regels voor SWOT-mapping (hybride benadering, wees eerlijk en transparant):`,
-`- Gebruik signalen uit DVF/prijs, Géorisques, PLU/SUP, DPE/isolatie en advertentietekst.`,
-`- Interne zaken (staat, prijs, ontbrekende documenten) → "Mogelijke zorgpunten".`,
-`- Externe zaken (overheidsrisico’s zoals overstroming/seismisch/industrieel, beleidsbeperkingen, markt) → "Mogelijke bedreigingen".`,
-`- "Sterke punten": o.a. relatief lage prijs (<= ~-10% t.o.v. DVF-mediaan), géén georisques-hits, goede energetische score (DPE A–C), isolatie, moderne systemen.`,
-`- "Mogelijke kansen": o.a. lage prijs met renovatiepotentieel, PLU-mogelijkheden, verduurzamingswinst, subsidies.`,
-`- Bij ontbrekende brondata: noem dat expliciet als zorgpunt (bijv. ERP ontbreekt).`,
-`- Voeg per bullet een korte bron-tag toe: (bron: DVF), (bron: Géorisques), (bron: PLU), (bron: advertentie), (bron: DPE/isolatie), of (bron: onbekend).`,
-`- Geef ook een confidence per bullet: laag / middel / hoog.`,
-`- Formuleer neutraal, zonder alarmisme. Max 3–6 bullets per lijst.`,
-`- Neem een kort "actieplan" op (3–6 puntsgewijze acties, pragmatisch – bv. ERP opvragen, PLU-zonering checken, DVF vergelijken, kadastrale referenties bevestigen).`,
-`- Neem een compacte lijst "communicatie" op met punten/vragen voor verkoper, notaris en makelaar (in NL, to-the-point).`,
-`- Houd een "disclaimer" veld aan (1 zin in NL).`,
-`JSON-schema (STRICT, alleen velden hieronder, strings en arrays van strings):`,
-`{
-  "swot": {
-    "sterke_punten": [ "• tekst (bron: X) [confidence: laag|middel|hoog]" ],
-    "mogelijke_zorgpunten": [ "• tekst (bron: X) [confidence: ...]" ],
-    "mogelijke_kansen": [ "• tekst (bron: X) [confidence: ...]" ],
-    "mogelijke_bedreigingen": [ "• tekst (bron: X) [confidence: ...]" ]
-  },
-  "actieplan": [ "• actie 1", "• actie 2" ],
-  "communicatie": {
-    "verkoper": [ "• vraag 1", "• vraag 2" ],
-    "notaris": [ "• vraag 1", "• vraag 2" ],
-    "makelaar": [ "• vraag 1", "• vraag 2" ]
-  },
-  "red_flags": [ "• (optioneel, legacy-veld — zet hier dezelfde items als 'mogelijke_zorgpunten' als dat logisch is)" ],
-  "actions": [ "• (optioneel, legacy-veld — copieer uit 'actieplan' )" ],
-  "questions": [ "• (optioneel, legacy-veld — combineer communicatiepunten indien nodig)" ],
-  "disclaimer": "korte NL disclaimerzin",
-  "raw_text": "max 500 tekens, samenvatting in lopende tekst (NL)."
-}`,
-`Antwoord **alleen** met JSON volgens bovenstaand schema.`
-  ].join("\n\n");
-}
-
-function extractJson(text) {
-  if (!text || typeof text !== "string") return null;
-  try { return JSON.parse(text); } catch {}
-  const first = text.indexOf("{");
-  const last = text.lastIndexOf("}");
-  if (first >= 0 && last > first) {
-    const slice = text.slice(first, last + 1);
-    try { return JSON.parse(slice); } catch {}
-  }
-  return null;
-}
-
-async function callGeminiOnce({ model, apiKey, prompt }) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const body = { contents: [{ parts: [{ text: prompt }]}] };
-
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), 20_000);
-
-  await enforceRateLimit();
-
-  let resp, json;
-  try {
-    resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json; charset=utf-8" },
-      body: JSON.stringify(body),
-      signal: ac.signal
-    });
-    const ct = resp.headers.get("content-type") || "";
-    json = ct.includes("application/json") ? await resp.json() : await resp.text();
-  } finally {
-    clearTimeout(t);
-  }
-  return { status: resp?.status || 0, data: json };
-}
-
-async function callGeminiWithRetries({ prompt }) {
-  const apiKey = process.env.GEMINI_API_KEY || "";
-  if (!apiKey) {
-    const e = new Error("Server misconfigured: GEMINI_API_KEY ontbreekt.");
-    e.status = 500;
-    throw e;
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    res.status(405).json({ ok: false, error: "Method Not Allowed. Use POST { dossier }." });
+    return;
   }
 
-  let modelsToTry = [DEFAULT_MODEL_PRIMARY, ALT_MODEL, DEFAULT_MODEL_FALLBACK];
-  let lastErr = null;
+  const { dossier, signals } = (req.body || {});
+  if (!dossier || typeof dossier !== 'string' || !dossier.trim()) {
+    res.status(400).json({ ok: false, error: "Bad Request: veld 'dossier' is verplicht en mag niet leeg zijn." });
+    return;
+  }
+
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  if (!GEMINI_API_KEY) {
+    res.status(500).json({ ok: false, error: "Server-misconfiguratie: GEMINI_API_KEY ontbreekt." });
+    return;
+  }
+
+  const models = [
+    'gemini-2.0-flash',           // default
+    'gemini-2.0-flash',           // retry zelfde model (handig bij incidentele NOT_FOUND/rollout)
+    'gemini-1.5-flash-latest'     // fallback
+  ];
+
+  const prompt = buildPrompt(dossier, signals);
+
+  // --- 1) Call Gemini met backoff & fallbacks ---
+  let modelUsed = null;
   let throttleNotice = null;
+  let aiText = null;
 
-  for (let i = 0; i < modelsToTry.length; i++) {
-    let model = modelsToTry[i];
-    let attempts = 0;
-    while (attempts < 3) {
-      attempts++;
-      const { status, data } = await callGeminiOnce({ model, apiKey, prompt });
-
-      if (status >= 200 && status < 300) {
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    try {
+      const { text, throttle } = await callGeminiOnce({
+        apiKey: GEMINI_API_KEY,
+        model,
+        text: prompt
+      });
+      aiText = text;
+      modelUsed = model;
+      if (throttle) throttleNotice = throttle;
+      break;
+    } catch (err) {
+      // 404 / NOT_FOUND => probeer volgende model
+      if (err.status === 404 || /NOT_FOUND/.test(String(err.message || ''))) {
+        // Ga door naar volgende model
+        continue;
+      }
+      // 429 => backoff 2s, nogmaals; daarna 4s
+      if (err.status === 429) {
+        if (!throttleNotice) throttleNotice = '429 throttled – backoff toegepast';
+        await sleep(2000);
         try {
-          const text = (data?.candidates?.[0]?.content?.parts || [])
-            .map(p => (typeof p.text === "string" ? p.text : ""))
-            .join("\n")
-            .trim();
-          const parsed = extractJson(text);
-          if (parsed) {
-            return { model, throttleNotice, output: parsed, rawText: text };
+          const { text, throttle } = await callGeminiOnce({
+            apiKey: GEMINI_API_KEY,
+            model,
+            text: prompt
+          });
+          aiText = text;
+          modelUsed = model;
+          if (throttle) throttleNotice = throttle;
+          break;
+        } catch (e2) {
+          if (e2.status === 429) {
+            await sleep(4000);
+            const { text, throttle } = await callGeminiOnce({
+              apiKey: GEMINI_API_KEY,
+              model,
+              text: prompt
+            });
+            aiText = text;
+            modelUsed = model;
+            if (throttle) throttleNotice = throttle;
+            break;
           }
-          lastErr = new Error("Geen valide JSON van model ontvangen.");
-          lastErr.details = text.slice(0, 2000);
-          break;
-        } catch (e) {
-          lastErr = e;
-          break;
+          // Anders: probeer volgend model
+          continue;
         }
       }
-
-      const errStr = JSON.stringify(data || {});
-      if (status === 404 || /NOT_FOUND/i.test(errStr)) {
-        break; // ander model
-      }
-
-      if (status === 429) {
-        if (attempts === 1) { throttleNotice = "429 ontvangen: backoff 2s toegepast."; await new Promise(r => setTimeout(r, 2000)); continue; }
-        if (attempts === 2) { throttleNotice = "429 ontvangen: extra backoff 4s toegepast."; await new Promise(r => setTimeout(r, 4000)); continue; }
-        lastErr = new Error("429 na retries.");
-        break;
-      }
-
-      lastErr = new Error(`Gemini HTTP ${status}`);
-      lastErr.details = data;
-      break;
+      // Andere fout => probeer volgend model
+      continue;
     }
-    // volgend model
   }
 
-  if (lastErr) throw lastErr;
-  throw new Error("Onbekende fout bij AI-oproep.");
-}
+  // --- 2) Parse AI, bouw fallback SWOT & overige secties ---
+  const parsed = parseAiText(aiText);
+  const swot = ensureSwotWithFallback(parsed.swot, signals);
+  const actieplan = ensureActieplan(parsed.actieplan, signals);
+  const communicatie = ensureCommunicatie(parsed.communicatie, signals);
 
-function toArr(v) {
-  if (!v) return [];
-  if (Array.isArray(v)) return v.map(x => String(x));
-  if (typeof v === "string") return v.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  return [];
-}
-
-function normalizeOutput(ai) {
   const out = {
-    swot: {
-      sterke_punten: [],
-      mogelijke_zorgpunten: [],
-      mogelijke_kansen: [],
-      mogelijke_bedreigingen: [],
-    },
-    actieplan: [],
-    communicatie: {
-      verkoper: [],
-      notaris: [],
-      makelaar: [],
-    },
-    red_flags: [],
-    actions: [],
-    questions: [],
-    disclaimer: "",
-    raw_text: ""
+    swot,
+    actieplan,
+    communicatie,
+    red_flags: parsed.red_flags || [],
+    actions: parsed.actions || [],
+    questions: parsed.questions || [],
+    disclaimer: parsed.disclaimer || defaultDisclaimer(),
+    raw_text: aiText || defaultRawText(dossier, signals)
   };
 
-  if (ai && typeof ai === "object") {
-    if (ai.swot && typeof ai.swot === "object") {
-      out.swot.sterke_punten = toArr(ai.swot.sterke_punten);
-      out.swot.mogelijke_zorgpunten = toArr(ai.swot.mogelijke_zorgpunten);
-      out.swot.mogelijke_kansen = toArr(ai.swot.mogelijke_kansen);
-      out.swot.mogelijke_bedreigingen = toArr(ai.swot.mogelijke_bedreigingen);
+  res.status(200).json({
+    ok: true,
+    model: modelUsed || models[0],
+    throttleNotice: throttleNotice || null,
+    output: out,
+    meta: {
+      received_chars: dossier.length,
+      signals_present: !!signals,
+      timestamp: new Date().toISOString()
     }
-    out.actieplan = toArr(ai.actieplan);
-    if (ai.communicatie && typeof ai.communicatie === "object") {
-      out.communicatie.verkoper = toArr(ai.communicatie.verkoper);
-      out.communicatie.notaris = toArr(ai.communicatie.notaris);
-      out.communicatie.makelaar = toArr(ai.communicatie.makelaar);
-    }
-    out.red_flags = toArr(ai.red_flags);
-    out.actions = toArr(ai.actions);
-    out.questions = toArr(ai.questions);
-    out.disclaimer = typeof ai.disclaimer === "string" ? ai.disclaimer : "";
-    out.raw_text = typeof ai.raw_text === "string" ? ai.raw_text : "";
+  });
+}
+
+// ---------------- Helpers ----------------
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function callGeminiOnce({ apiKey, model, text }) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const body = {
+    contents: [{ parts: [{ text }] }]
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(body)
+  });
+
+  const contentType = res.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+  const data = isJson ? await res.json() : await res.text();
+
+  if (!res.ok) {
+    const msg = isJson ? (data?.error?.message || JSON.stringify(data)) : String(data);
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
 
-  if (!out.red_flags.length && out.swot.mogelijke_zorgpunten.length) {
-    out.red_flags = [...out.swot.mogelijke_zorgpunten];
+  let textOut = '';
+  try {
+    // v1beta: candidates[0].content.parts[0].text
+    const cand = data?.candidates?.[0];
+    const parts = cand?.content?.parts || [];
+    textOut = parts.map(p => p.text).filter(Boolean).join('\n').trim();
+  } catch {
+    textOut = '';
   }
-  if (!out.actions.length && out.actieplan.length) {
-    out.actions = [...out.actieplan];
+  return { text: textOut, throttle: res.status === 429 ? '429 throttled' : null };
+}
+
+// Prompt stuurt richting SWOT + actieplan + communicatie
+function buildPrompt(dossier, signals) {
+  const hints = [];
+  if (signals) {
+    if (typeof signals.price === 'number') hints.push(`- Vraagprijs: EUR ${signals.price}`);
+    if (signals.dvf?.median_price != null) hints.push(`- DVF-mediaan: EUR ${signals.dvf.median_price}`);
+    if (signals.georisques) {
+      const keys = Object.keys(signals.georisques).filter(k => signals.georisques[k]);
+      if (keys.length) hints.push(`- Géorisques (positief): ${keys.join(', ')}`);
+      else hints.push(`- Géorisques: geen categorieën positief`);
+    }
+    if (signals.advertentie?.keywords?.length) {
+      hints.push(`- Advertentie keywords: ${signals.advertentie.keywords.join(', ')}`);
+    }
+    if (signals.advertentie?.towns?.length) {
+      hints.push(`- Advertentie noemt nabij: ${signals.advertentie.towns.join(', ')}`);
+    }
+    if (signals.advertentie?.near_water) hints.push(`- Heuristiek: ligging nabij water`);
+    if (signals.advertentie?.truncated) hints.push(`- Waarschuwing: advertentietekst mogelijk onvolledig (Lees meer/Lire plus)`);
   }
-  if (!out.questions.length) {
-    out.questions = [
-      ...out.communicatie.verkoper,
-      ...out.communicatie.notaris,
-      ...out.communicatie.makelaar
-    ].slice(0, 12);
+
+  const sys = [
+    'Je bent een kritische due-diligence assistent voor de Franse woningmarkt.',
+    'Formaat-output in het Nederlands, met duidelijke bullets.',
+    'Gebruik secties: SWOT (vier blokken), Actieplan (korte taken), Communicatie (verkoper/notaris/makelaar).',
+    'Vermijd loze taal; wees concreet en kort.'
+  ].join(' ');
+
+  return [
+    sys,
+    '',
+    'Dossiertekst:',
+    dossier,
+    '',
+    'Contextsignalen (gestructureerd):',
+    hints.join('\n'),
+    '',
+    'Gevraagde output (compact, NL):',
+    '1) SWOT: Sterke punten; Mogelijke zorgpunten; Mogelijke kansen; Mogelijke bedreigingen.',
+    '2) Actieplan: 5–8 puntsgewijze acties.',
+    '3) Communicatie: 3 vragen voor verkoper, 3 voor notaris, 3 voor makelaar.',
+    'Kort en feitelijk, zonder overdrijven.'
+  ].join('\n');
+}
+
+function parseAiText(text) {
+  if (!text || !text.trim()) {
+    return {
+      swot: { sterke_punten: [], mogelijke_zorgpunten: [], mogelijke_kansen: [], mogelijke_bedreigingen: [] },
+      actieplan: [],
+      communicatie: { verkoper: [], notaris: [], makelaar: [] },
+      red_flags: [],
+      actions: [],
+      questions: [],
+      disclaimer: ''
+    };
+  }
+
+  // Simpele heuristiek: splits op kopjes
+  const lower = text.toLowerCase();
+  const sect = (key) => extractSection(text, key);
+
+  return {
+    swot: {
+      sterke_punten: bullets(sect('sterke punten')),
+      mogelijke_zorgpunten: bullets(sect('zorgpunten')) || bullets(sect('zwakten')) || bullets(sect('mogelijke zorgpunten')),
+      mogelijke_kansen: bullets(sect('kansen')) || bullets(sect('opportuniteiten')),
+      mogelijke_bedreigingen: bullets(sect('bedreigingen')) || bullets(sect('risico\'s'))
+    },
+    actieplan: bullets(sect('actieplan')),
+    communicatie: {
+      verkoper: bullets(sect('verkoper')),
+      notaris: bullets(sect('notaris')),
+      makelaar: bullets(sect('makelaar'))
+    },
+    red_flags: bullets(sect('rode vlaggen')),
+    actions: bullets(sect('actions')),
+    questions: bullets(sect('vragen')),
+    disclaimer: findDisclaimer(text)
+  };
+}
+
+function extractSection(text, title) {
+  const rx = new RegExp(`\\b${escapeReg(title)}\\b[\\s\\S]*?(?=\\n\\s*\\b[A-Z][A-Za-zÀ-ÖØ-öø-ÿ ]{2,}\\b\\s*:|$)`, 'i');
+  const m = text.match(rx);
+  return m ? m[0] : '';
+}
+function bullets(block) {
+  if (!block) return [];
+  const lines = block.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const out = [];
+  for (const ln of lines) {
+    const m = ln.match(/^[\-\*\u2022•]\s*(.+)$/);
+    if (m) out.push('• ' + m[1].trim());
+  }
+  return out;
+}
+function findDisclaimer(text) {
+  const m = text.match(/disclaimer[:\s-]+([\s\S]+)$/i);
+  return m ? m[1].trim() : '';
+}
+function escapeReg(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function defaultDisclaimer() {
+  return 'Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.';
+}
+function defaultRawText(dossier, signals) {
+  return `Vooronderzoek op basis van beperkte data.\n\nDossier:\n${dossier}\n\nSignals:\n${JSON.stringify(signals || {}, null, 2)}`;
+}
+
+// ---- Fallback/aanvulling vanuit signals (assertief) ----
+function ensureSwotWithFallback(swot, signals) {
+  const out = {
+    sterke_punten: (swot?.sterke_punten || []).slice(0),
+    mogelijke_zorgpunten: (swot?.mogelijke_zorgpunten || []).slice(0),
+    mogelijke_kansen: (swot?.mogelijke_kansen || []).slice(0),
+    mogelijke_bedreigingen: (swot?.mogelijke_bedreigingen || []).slice(0)
+  };
+
+  // DVF vs prijs
+  const price = isNum(signals?.price) ? Number(signals.price) : null;
+  const dvfMedian = isNum(signals?.dvf?.median_price) ? Number(signals.dvf.median_price) : null;
+  if (price != null && dvfMedian != null) {
+    if (price < dvfMedian) {
+      pushUnique(out.sterke_punten, '• Prijs ligt onder DVF-mediaan (bron: DVF) [confidence: hoog]');
+      pushUnique(out.mogelijke_kansen, '• Potentieel voor waardevermeerdering bij renovatie of optimalisatie [confidence: middel]');
+    } else if (price > dvfMedian) {
+      pushUnique(out.mogelijke_zorgpunten, '• Prijs ligt boven DVF-mediaan; onderbouwing noodzakelijk (bron: DVF) [confidence: middel]');
+    }
+  }
+
+  // Géorisques flags
+  const gr = signals?.georisques;
+  if (gr) {
+    const anyTrue = Object.values(gr).some(Boolean);
+    if (!anyTrue) {
+      pushUnique(out.sterke_punten, '• Geen directe omgevingsrisico’s geïdentificeerd (bron: Géorisques) [confidence: hoog]');
+    } else {
+      // indien specifieke risico’s true zijn, voeg bedreiging toe
+      const trueKeys = Object.keys(gr).filter(k => gr[k]);
+      if (trueKeys.length) {
+        pushUnique(out.mogelijke_bedreigingen, `• Omgevingsrisico’s aanwezig: ${trueKeys.join(', ')} (bron: Géorisques) [confidence: hoog]`);
+      }
+    }
+  }
+
+  // Advertentie-heuristiek
+  const adv = signals?.advertentie || {};
+  if (Array.isArray(adv.towns) && adv.towns.length) {
+    pushUnique(out.mogelijke_zorgpunten, `• Advertentie noemt nabijgelegen plaatsen: ${adv.towns.join(', ')} – mogelijke locatie-afwijking [confidence: middel]`);
+  }
+  if (adv.near_water) {
+    pushUnique(out.mogelijke_zorgpunten, '• Ligging nabij water → verhoogde ERP/PLU-aandacht vereist (bron: advertentie) [confidence: hoog]');
+    pushUnique(out.mogelijke_bedreigingen, '• Potentieel overstromingsrisico (inondation/submersion) [confidence: middel]');
+  }
+  if (adv.truncated) {
+    pushUnique(out.mogelijke_zorgpunten, '• Advertentietekst mogelijk onvolledig (Lees meer/Lire plus niet geopend) [confidence: hoog]');
+  }
+  if (Array.isArray(adv.keywords) && adv.keywords.length) {
+    if (adv.keywords.some(k => /isolatie|isolation|double vitrage|triple vitrage|warmtepomp|pompe à chaleur/i.test(k))) {
+      pushUnique(out.sterke_punten, '• Positieve energie-indicaties (isolatie/glas/warmtepomp) (bron: advertentie) [confidence: middel]');
+    }
+    if (adv.keywords.some(k => /travaux|rénover|to renovate/i.test(k))) {
+      pushUnique(out.mogelijke_kansen, '• Renovatiekansen met waardevermeerdering (bron: advertentie) [confidence: middel]');
+      pushUnique(out.mogelijke_zorgpunten, '• Werkzaamheden te verwachten (bron: advertentie) [confidence: middel]');
+    }
+  }
+
+  return out;
+}
+
+function ensureActieplan(list, signals) {
+  const out = Array.isArray(list) ? list.slice(0) : [];
+  const add = (s) => pushUnique(out, s);
+
+  add('• ERP (État des Risques et Pollutions) opvragen zodra exact adres bekend is.');
+  add('• PLU-zonering en SUP controleren via Géoportail Urbanisme.');
+  add('• Kadastrale referenties en perceelgrenzen bij de notaris bevestigen.');
+  add('• Recente DVF-transacties in de directe omgeving vergelijken.');
+  add('• Staat van installaties (elektra/gas/riolering) laten inspecteren.');
+
+  const adv = signals?.advertentie || {};
+  if (adv.near_water) {
+    add('• Extra: overstromingshistorie en preventiemaatregelen opvragen (bijv. PPRI/ERP-bijlage).');
+  }
+  if (adv.truncated) {
+    add('• Volledige advertentietekst verzamelen (open “Lees meer / Lire plus” en kopieer opnieuw).');
+  }
+  if (Array.isArray(adv.towns) && adv.towns.length) {
+    add('• Exacte adreslocatie (pin of adres) bij makelaar/verkoper bevestigen i.v.m. locatie-afwijking.');
   }
   return out;
 }
 
-// ------------------ Fallback-regels ------------------
-
-function pushUnique(arr, text) {
-  const s = String(text || "").trim();
-  if (!s) return;
-  if (!arr.some(x => x.trim() === s)) arr.push(s);
-}
-
-function pct(n) {
-  const x = Math.round(n * 100);
-  const sign = x > 0 ? `+${x}` : `${x}`;
-  return `${sign}%`;
-}
-
-function deriveFallbackFromSignals(signals) {
-  const swot = {
-    sterke_punten: [],
-    mogelijke_zorgpunten: [],
-    mogelijke_kansen: [],
-    mogelijke_bedreigingen: []
+function ensureCommunicatie(obj, signals) {
+  const out = {
+    verkoper: Array.isArray(obj?.verkoper) ? obj.verkoper.slice(0) : [],
+    notaris: Array.isArray(obj?.notaris) ? obj.notaris.slice(0) : [],
+    makelaar: Array.isArray(obj?.makelaar) ? obj.makelaar.slice(0) : []
   };
+  const pushV = (s) => pushUnique(out.verkoper, s);
+  const pushN = (s) => pushUnique(out.notaris, s);
+  const pushM = (s) => pushUnique(out.makelaar, s);
 
-  if (!signals || typeof signals !== "object") return swot;
+  // Minimale set
+  pushV('• Is er een recent ERP beschikbaar (≤ 6 maanden)?');
+  pushV('• Zijn er bekende gebreken of lopende dossiers?');
+  pushV('• Zijn er recente renovaties uitgevoerd (met facturen/garanties)?');
 
-  // Prijs vs DVF
-  const price = typeof signals.price === "number" ? signals.price : null;
-  const dvfMedian = typeof signals?.dvf?.median_price === "number" ? signals.dvf.median_price : null;
-  if (price && dvfMedian && dvfMedian > 0) {
-    const rel = (price - dvfMedian) / dvfMedian;
-    if (rel <= -0.10) {
-      pushUnique(swot.sterke_punten, `• Relatief lage vraagprijs t.o.v. DVF-mediaan (${pct(rel)}) (bron: DVF) [confidence: middel]`);
-      // combinatie met renovatie → kans
-      if (signals?.advertentie?.keywords?.some(k => /rénover|travaux|renov/i.test(k))) {
-        pushUnique(swot.mogelijke_kansen, `• Lage prijs in combinatie met renovatie-indicaties → waardepotentieel / onderhandelingsruimte (bron: advertentie) [confidence: middel]`);
-      }
-    } else if (rel >= +0.10) {
-      pushUnique(swot.mogelijke_zorgpunten, `• Relatief hoge vraagprijs t.o.v. DVF-mediaan (${pct(rel)}) (bron: DVF) [confidence: middel]`);
-    }
-  }
+  pushN('• Kadastrale referenties en erfdienstbaarheden bevestigen.');
+  pushN('• Zijn er openstaande schulden of inschrijvingen op het pand?');
+  pushN('• Zijn alle verplichte documenten beschikbaar voor compromis?');
 
-  // Géorisques
-  const gr = signals.georisques || null;
-  if (gr && typeof gr === "object") {
-    const keysTrue = Object.entries(gr).filter(([, v]) => !!v).map(([k]) => k);
-    if (keysTrue.length === 0 && Object.keys(gr).length > 0) {
-      pushUnique(swot.sterke_punten, `• Geen gemeentelijke risico-categorieën gedetecteerd (Géorisques) (bron: Géorisques) [confidence: middel]`);
-    } else if (keysTrue.length > 0) {
-      const labels = {
-        flood: 'overstroming', seismic: 'seismisch', industrial: 'industrieel',
-        coastal: 'kust/submersie', radon: 'radon', forestfire: 'bosbrand', clay: 'krimp/zwel (argiles)'
-      };
-      const named = keysTrue.map(k => labels[k] || k).join(', ');
-      pushUnique(swot.mogelijke_bedreigingen, `• Externe risico’s aanwezig: ${named} (bron: Géorisques) [confidence: middel]`);
-    }
-  }
+  pushM('• Kunt u de exacte locatie (adres/pin) bevestigen?');
+  pushM('• Recente vergelijkbare verkopen in de directe nabijheid?');
+  pushM('• Reden van verkoop en eventuele biedingen?');
 
-  // DPE / isolatie hints
-  const dpe = signals.dpe || {};
-  const hints = Array.isArray(dpe.hints) ? dpe.hints : [];
-  const grade = typeof dpe.grade === "string" ? dpe.grade.toUpperCase() : "";
-
-  const goodEnergy = (grade && ['A','B','C'].includes(grade)) || hints.some(x => /dpe a–c|dpe a|dpe b|dpe c/i.test(x));
-  if (goodEnergy) {
-    pushUnique(swot.sterke_punten, `• Degelijke energetische prestatie (DPE ${grade || 'A–C indicatie'}) (bron: DPE/isolatie) [confidence: middel]`);
+  const adv = signals?.advertentie || {};
+  if (adv.near_water) {
+    pushM('• Ligt het pand in of nabij een overstromingsgebied (PPRI)?');
   }
-  if (hints.some(x => /warmtepomp|pompe à chaleur/i.test(x))) {
-    pushUnique(swot.sterke_punten, `• Moderne installatie: warmtepomp aanwezig (bron: DPE/isolatie) [confidence: middel]`);
+  if (Array.isArray(adv.towns) && adv.towns.length) {
+    pushM(`• Advertentie noemt nabij: ${adv.towns.join(', ')} – in welke gemeente ligt het pand exact?`);
   }
-  if (hints.some(x => /triple|double vitrage|hr\+\+/i.test(x))) {
-    pushUnique(swot.sterke_punten, `• Goede beglazing (dubbel/triple/HR++) (bron: DPE/isolatie) [confidence: middel]`);
-  }
-  if (hints.some(x => /isolati(e|on)|toit isolé/i.test(x))) {
-    pushUnique(swot.sterke_punten, `• Isolatie-aanwijzingen (dak/gevel/glas) (bron: DPE/isolatie) [confidence: middel]`);
-  }
-
-  // Renovatie / werkzaamheden
-  const adKw = (signals?.advertentie?.keywords || []).map(String);
-  if (adKw.some(k => /rénover|travaux|to renovate/i.test(k))) {
-    pushUnique(swot.mogelijke_kansen, `• Renovatiepotentieel / waardegroei bij aanpak (bron: advertentie) [confidence: laag]`);
-    pushUnique(swot.mogelijke_zorgpunten, `• Werkzaamheden voorzien → kosten/doorlooptijd inschatten (bron: advertentie) [confidence: laag]`);
-  }
-
-  return swot;
+  return out;
 }
 
-function ensureActieplanAndCommunicatie(out) {
-  if (!Array.isArray(out.actieplan) || out.actieplan.length === 0) {
-    out.actieplan = [
-      "• ERP (≤ 6 maanden) opvragen voor exact adres",
-      "• PLU-zonering en SUP-check via Géoportail bevestigen",
-      "• DVF vergelijken met recente transacties (zelfde type/commune)",
-      "• Kadastrale referenties en servitudes bevestigen bij notaris",
-      "• Technische keuring/verbeterplan (isolatie, installaties, vocht) opstellen"
-    ];
-  }
-  const c = out.communicatie || (out.communicatie = { verkoper:[], notaris:[], makelaar:[] });
-  if ((!Array.isArray(c.verkoper) || c.verkoper.length === 0) &&
-      (!Array.isArray(c.notaris) || c.notaris.length === 0) &&
-      (!Array.isArray(c.makelaar) || c.makelaar.length === 0)) {
-    out.communicatie.verkoper = [
-      "• Kunt u recente ERP/diagnostics (DPE, elektriciteit, gas) delen?",
-      "• Zijn er bekende gebreken of lopende geschillen?",
-      "• Bestaan er erfdienstbaarheden of bijzondere gebruiksrechten?"
-    ];
-    out.communicatie.notaris = [
-      "• Bevestig kadastrale referenties en ingeschreven servitudes",
-      "• Zijn er openstaande schulden of hypotheken op het pand?",
-      "• Is er een DPU (droit de préemption) van toepassing?"
-    ];
-    out.communicatie.makelaar = [
-      "• Wat is de onderhandelingsruimte en recente vergelijkbare verkopen?",
-      "• Zijn er biedingen of voorbehouden actief?",
-      "• Kunt u een bezichtiging en dossierinzage plannen?"
-    ];
-  }
-  if (!out.disclaimer) {
-    out.disclaimer = "Dit vooronderzoek is indicatief; verifieer gegevens bij officiële bronnen en professionals.";
-  }
+function pushUnique(arr, item) {
+  if (!arr.some(x => String(x) === String(item))) arr.push(item);
 }
-
-// ------------------ HTTP handler ------------------
-
-export default async function handler(req, res) {
-  try {
-    if (req.method !== "POST") {
-      res.setHeader("Allow", "POST");
-      return sendJson(res, 405, { ok: false, error: "Method Not Allowed. Use POST { dossier, signals? }." });
-    }
-
-    // Body lezen (Vercel kan body als string of object geven)
-    let body = req.body;
-    if (typeof body === "string") {
-      try { body = JSON.parse(body); } catch {}
-    }
-    if (!body || typeof body !== "object") {
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const raw = Buffer.concat(chunks).toString("utf8");
-      try { body = JSON.parse(raw || "{}"); } catch { body = {}; }
-    }
-
-    const dossier = sanitize(body.dossier);
-    const signals = (body.signals && typeof body.signals === "object") ? body.signals : null;
-
-    if (!dossier) {
-      return sendJson(res, 400, { ok: false, error: "Bad Request: veld 'dossier' is verplicht en mag niet leeg zijn." });
-    }
-
-    const prompt = buildPrompt(dossier, signals);
-    const started = new Date().toISOString();
-
-    // --- AI call(s) ---
-    const { model, throttleNotice, output: aiOut } = await callGeminiWithRetries({ prompt });
-    const normalized = normalizeOutput(aiOut);
-
-    // --- Fallback toepassen indien nodig ---
-    const swotEmpty =
-      (!normalized.swot.sterke_punten?.length) &&
-      (!normalized.swot.mogelijke_zorgpunten?.length) &&
-      (!normalized.swot.mogelijke_kansen?.length) &&
-      (!normalized.swot.mogelijke_bedreigingen?.length);
-
-    if (swotEmpty) {
-      const fb = deriveFallbackFromSignals(signals);
-      normalized.swot.sterke_punten = fb.sterke_punten;
-      normalized.swot.mogelijke_zorgpunten = fb.mogelijke_zorgpunten;
-      normalized.swot.mogelijke_kansen = fb.mogelijke_kansen;
-      normalized.swot.mogelijke_bedreigingen = fb.mogelijke_bedreigingen;
-    }
-
-    ensureActieplanAndCommunicatie(normalized);
-
-    // Legacy velden bijvullen voor backward-compat
-    if (!normalized.red_flags.length && normalized.swot.mogelijke_zorgpunten.length) {
-      normalized.red_flags = [...normalized.swot.mogelijke_zorgpunten];
-    }
-    if (!normalized.actions.length && normalized.actieplan.length) {
-      normalized.actions = [...normalized.actieplan];
-    }
-    if (!normalized.questions.length) {
-      normalized.questions = [
-        ...normalized.communicatie.verkoper,
-        ...normalized.communicatie.notaris,
-        ...normalized.communicatie.makelaar
-      ].slice(0, 12);
-    }
-
-    return sendJson(res, 200, {
-      ok: true,
-      model,
-      throttleNotice: throttleNotice || null,
-      output: normalized,
-      meta: {
-        received_chars: dossier.length,
-        signals_present: !!signals,
-        timestamp: started
-      }
-    });
-
-  } catch (err) {
-    const status = err.status || 502;
-    const msg = err.message || "AI-analyse mislukt";
-    return sendJson(res, status, { ok: false, error: msg, details: err.details || undefined });
-  }
-}
+function isNum(v) { return typeof v === 'number' && Number.isFinite(v); }
