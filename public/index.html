@@ -19,10 +19,11 @@
   <main class="container">
     <!-- Intro / uitleg -->
     <section class="intro">
-      <h2>Stap 1: Maak dossier</h2>
+      <h2>Voer beschikbare gegevens in</h2>
       <p class="muted">
         Vul één adres in, óf plak een advertentielink. <strong>Plak ook de advertentietekst</strong> zodat we meer context hebben.
-        Heb je (nog) geen exact adres? Geen probleem — we starten met de plaatsnaam.
+        Heb je (nog) geen exact adres? Geen probleem — we starten met de plaatsnaam. Zodra het exacte adres bekend is,
+        kun je de analyse opnieuw draaien voor meer detail (Géorisques-ERP op adres, preciezere PLU/SUP, nauwkeuriger DVF).
       </p>
     </section>
 
@@ -67,7 +68,7 @@
     <!-- Primaire actie (enkel) -->
     <section class="actions">
       <button id="btn-generate" class="btn btn-primary">Maak dossier</button>
-      <!-- GEEN 'btn-make-prompt' of 'btn-fetch' meer in de HTML -->
+      <!-- GEEN extra actieknoppen hier -->
     </section>
 
     <!-- Contactkanaal -->
@@ -119,12 +120,11 @@
       <div id="letter-output" class="panel"></div>
     </section>
 
-    <!-- Disclaimer (alleen tonen in PDF; script.js verbergt dit op de pagina) -->
+    <!-- Disclaimer (korte versie; extra waarschuwing staat NIET op de pagina) -->
     <section class="disclaimer">
       <p class="muted small">
         Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme).
-        Aan deze tool kunnen geen rechten worden ontleend. Voorkom een overhaaste “coup de cœur”: weeg rustig af, bepaal de totale acquisitiekosten (incl. makelaar en notaris),
-        en plan verbouwingskosten realistisch in. Tip: de koper kan een eigen notaris kiezen; de cumulatieve notariskosten blijven in de praktijk gelijk.
+        Aan deze tool kunnen geen rechten worden ontleend.
       </p>
     </section>
   </main>
