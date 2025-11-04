@@ -67,7 +67,7 @@
     <!-- Primaire actie (enkel) -->
     <section class="actions">
       <button id="btn-generate" class="btn btn-primary">Maak dossier</button>
-      <!-- Verwijderd: btn-fetch en btn-make-prompt -->
+      <!-- GEEN 'btn-make-prompt' of 'btn-fetch' meer in de HTML -->
     </section>
 
     <!-- Contactkanaal -->
@@ -93,8 +93,8 @@
       </div>
     </section>
 
-    <!-- Compose knoppen -->
-    <section class="compose">
+    <!-- Compose knoppen (script.js toont pas ná analyse) -->
+    <section class="compose" hidden>
       <h3>Direct contact</h3>
       <div class="compose-row">
         <button id="btn-notary" class="btn">Maak bericht voor notaris (FR)</button>
@@ -119,7 +119,7 @@
       <div id="letter-output" class="panel"></div>
     </section>
 
-    <!-- Disclaimer -->
+    <!-- Disclaimer (alleen tonen in PDF; script.js verbergt dit op de pagina) -->
     <section class="disclaimer">
       <p class="muted small">
         Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme).
