@@ -5,166 +5,264 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>IMMODIAGNOSTIQUE – Indicatieve vastgoedanalyse</title>
-  <link rel="stylesheet" href="/style.css"/>
-  <meta name="color-scheme" content="light only"/>
+  <meta name="description" content="Immodiagnostique – hybride dossiergenerator met SWOT, omgevingsdossier en actieplan voor vastgoed in Frankrijk."/>
+  <link rel="stylesheet" href="/style.css?v=ui-showpipe-1"/>
 </head>
 <body>
   <header class="site-header">
     <div class="container">
-      <h1 class="brand">IMMODIAGNOSTIQUE</h1>
-      <p class="tagline">Een concept van Infofrankrijk.com</p>
+      <h1 class="app-title">IMMODIAGNOSTIQUE</h1>
+      <p class="app-subtitle">Een concept van Infofrankrijk.com</p>
     </div>
   </header>
 
   <main class="container">
-    <section class="card">
-      <h2>Voer beschikbare gegevens in</h2>
-      <p class="muted">Vul één adres in, óf plak een advertentielink. Plak ook de advertentietekst zodat we meer context hebben. Heb je (nog) geen exact adres? Geen probleem — we starten met de plaatsnaam.</p>
+    <!-- CTA / Invoer ------------------------------->
+    <section class="card" aria-labelledby="form-title">
+      <h2 id="form-title">Voer beschikbare gegevens in</h2>
+      <p class="muted">
+        Vul één adres in, óf plak een advertentielink. Plak ook de advertentietekst zodat we meer context hebben.
+        Heb je (nog) geen exact adres? Geen probleem — we starten met de plaatsnaam. Wanneer de exacte adresgegevens
+        later beschikbaar zijn, kun je de analyse opnieuw uitvoeren voor meer diepgang (Géorisques, DVF, PLU/SUP, kadastrale referenties).
+      </p>
 
-      <form id="form" class="form-grid" onsubmit="return false;">
-        <div class="field col-2">
-          <label for="adLink">Advertentielink <span class="muted">(optioneel)</span></label>
-          <input id="adLink" type="url" placeholder="https://www..." autocomplete="off" />
+      <form id="dossier-form" novalidate>
+        <div class="grid">
+          <div class="field">
+            <label for="advert-link">Advertentielink <span class="muted">(optioneel)</span></label>
+            <input id="advert-link" name="advert-link" type="url" inputmode="url" placeholder="https://www..." autocomplete="off" />
+          </div>
+
+          <div class="field">
+            <label for="city">Plaatsnaam <span class="req">*</span></label>
+            <input id="city" name="city" type="text" placeholder="Bijv: Montreuil-sur-Mer" required autocomplete="address-level2"/>
+          </div>
+
+          <div class="field">
+            <label for="price">Vraagprijs <span class="muted">(optioneel)</span></label>
+            <input id="price" name="price" type="number" inputmode="numeric" placeholder="Bijv: 250000" min="0" step="1000" />
+            <div class="help">Facultatief maar aanbevolen</div>
+          </div>
+
+          <div class="field">
+            <label for="postcode">Postcode</label>
+            <input id="postcode" name="postcode" type="text" placeholder="Bijv: 62170" inputmode="numeric" autocomplete="postal-code"/>
+          </div>
+
+          <div class="field">
+            <label for="street">Straatnaam</label>
+            <input id="street" name="street" type="text" placeholder="Bijv: Rue Pasteur" autocomplete="address-line1"/>
+          </div>
+
+          <div class="field">
+            <label for="housenr">Huisnummer</label>
+            <input id="housenr" name="housenr" type="text" placeholder="Bijv: 22" autocomplete="address-line2"/>
+          </div>
+
+          <div class="field field--full">
+            <label for="ad-text">Advertentietekst <span class="muted">(optioneel)</span></label>
+            <textarea id="ad-text" name="ad-text" rows="6" placeholder="Plak hier de volledige advertentietekst (Ctrl+A → Ctrl+C → Ctrl+V)"></textarea>
+            <div class="help">
+              Tip: klik op <em>‘Lees meer / Lire plus’</em> in de advertentie vóór je kopieert — dan missen we geen verborgen tekst.
+            </div>
+          </div>
         </div>
 
-        <div class="field">
-          <label for="city">Plaatsnaam <span class="req">*</span></label>
-          <input id="city" type="text" placeholder="Bijv: Montreuil-sur-Mer" autocomplete="address-level2" required />
+        <div class="cta-row">
+          <button id="btn-generate" type="button" class="btn btn-primary btn-large">
+            Maak dossier
+          </button>
+          <button id="btn-cancel" type="button" class="btn btn-ghost" hidden>Annuleer</button>
+          <button id="btn-export" type="button" class="btn btn-secondary" hidden>Exporteer rapport (PDF/print)</button>
         </div>
-
-        <div class="field">
-          <label for="price">Vraagprijs <span class="muted">(optioneel)</span></label>
-          <input id="price" type="number" inputmode="numeric" placeholder="Bijv: 250000" />
-          <div class="help">Facultatief maar wel aanbevolen</div>
-        </div>
-
-        <div class="field">
-          <label for="postcode">Postcode</label>
-          <input id="postcode" type="text" placeholder="Bijv: 62170" autocomplete="postal-code" />
-        </div>
-
-        <div class="field">
-          <label for="street">Straatnaam</label>
-          <input id="street" type="text" placeholder="Bijv: Rue Pasteur" autocomplete="address-line1" />
-        </div>
-
-        <div class="field">
-          <label for="number">Huisnummer</label>
-          <input id="number" type="text" placeholder="Bijv: 22" autocomplete="address-line2" />
-        </div>
-
-        <div class="field col-2">
-          <label for="adText">Advertentietekst <span class="muted">(optioneel)</span></label>
-          <textarea id="adText" rows="6" placeholder="Plak hier de volledige advertentietekst (Ctrl+A → Ctrl+C → Ctrl+V)"></textarea>
-        </div>
-
-        <div class="actions center">
-          <button id="btn-generate" class="btn primary" type="button">Maak dossier</button>
-          <!-- Annuleer-knop wordt door script.js dynamisch toegevoegd -->
-        </div>
-
-        <!-- Loader + status -->
-        <div id="loader" class="loader" hidden>
-          <div class="spinner" aria-hidden="true"></div>
-          <div class="spinner-label">Dossier wordt opgebouwd…</div>
-        </div>
-
-        <!-- Klein voortgangslogboek -->
-        <div id="progress-log" class="progress-log" aria-live="polite" aria-atomic="false"></div>
       </form>
     </section>
 
-    <!-- Officiële gegevens + basisdossier -->
-    <section id="dossier-panel" class="card" hidden>
-      <h2>Vastgoeddossier</h2>
-      <div id="dossier-output"></div>
+    <!-- Showpiece voortgang / pijplijn ------------------------------->
+    <section class="card" aria-labelledby="progress-title">
+      <h2 id="progress-title">Voortgang</h2>
+
+      <!-- Compact statusregel -->
+      <div class="progress-inline">
+        <div class="spinner" id="progress-spinner" aria-hidden="true"></div>
+        <div class="spinner-label" id="spinner-label" aria-live="polite">Wachten op start…</div>
+      </div>
+
+      <!-- Tijdlijn pijplijn: data-state = idle | active | done | error -->
+      <ol id="progress-pipeline" class="pipeline" aria-live="polite">
+        <li class="pipe-step" data-step="commune" data-state="idle">
+          <span class="pipe-title">Raadpleegt gemeente</span>
+          <span class="pipe-meta" id="step-commune-meta"></span>
+        </li>
+        <li class="pipe-step" data-step="gpu" data-state="idle">
+          <span class="pipe-title">Raadpleegt GPU (PLU/zonering)</span>
+          <span class="pipe-meta" id="step-gpu-meta"></span>
+        </li>
+        <li class="pipe-step" data-step="gpudoc" data-state="idle">
+          <span class="pipe-title">Haalt GPU-documenten op</span>
+          <span class="pipe-meta" id="step-gpudoc-meta"></span>
+        </li>
+        <li class="pipe-step" data-step="dvf" data-state="idle">
+          <span class="pipe-title">Controleert DVF (verkoopprijzen)</span>
+          <span class="pipe-meta" id="step-dvf-meta"></span>
+        </li>
+        <li class="pipe-step" data-step="georisques" data-state="idle">
+          <span class="pipe-title">Checkt Géorisques (risico’s)</span>
+          <span class="pipe-meta" id="step-georisques-meta"></span>
+        </li>
+        <li class="pipe-step" data-step="ai" data-state="idle">
+          <span class="pipe-title">Analyseert (Gemini)</span>
+          <span class="pipe-meta" id="step-ai-meta"></span>
+        </li>
+      </ol>
+
+      <!-- Verhalende log -->
+      <div id="progress-log" class="progress-log" aria-live="polite" aria-atomic="false"></div>
     </section>
 
-    <!-- AI-overzicht (SWOT, Actieplan, Vragen/Communicatie) -->
-    <section id="overview-panel" class="card" hidden>
-      <h2>AI-overzicht</h2>
-      <div id="overview-output"></div>
-    </section>
+    <!-- Resultaatpaneel ------------------------------->
+    <section id="result" class="card" aria-labelledby="result-title" hidden>
+      <h2 id="result-title">Diagnose</h2>
 
-    <!-- Contactkanaal + taal per ontvanger -->
-    <section class="card" id="contact-panel">
-      <h2>Contactkanaal</h2>
-      <p class="muted">Kies per ontvanger hoe je wilt communiceren. Knoppen worden actief na het genereren van het dossier.</p>
-
-      <div class="contact-grid">
-        <div class="recipient">
-          <h3>Notaris</h3>
-          <div class="radio-row" data-recipient="notary">
-            <label><input type="radio" name="channel-notary" value="email" checked> E-mail</label>
-            <label><input type="radio" name="channel-notary" value="dm"> Persoonlijk bericht (PB/DM)</label>
-            <label><input type="radio" name="channel-notary" value="phone"> Telefoon (script)</label>
-            <label><input type="radio" name="channel-notary" value="letter"> Brief</label>
-          </div>
-          <div class="row">
-            <label for="lang-notary" class="muted small">Taal</label>
-            <select id="lang-notary">
-              <option value="fr" selected>Frans</option>
-              <option value="nl">Nederlands</option>
-              <option value="en">Engels</option>
-            </select>
-          </div>
-          <button id="btn-notary" class="btn" type="button">Maak bericht voor notaris (FR)</button>
+      <div class="result-section">
+        <h3>1. Vastgoeddossier</h3>
+        <div class="keyfacts" id="keyfacts">
+          <!-- Dynamisch gevuld; toon gekuiste advertentielink (zonder query/hash) -->
+          <!-- Voorbeeld:
+          <div class="fact"><span class="k">Invoer:</span> <span class="v">62170 Montreuil-sur-Mer</span></div>
+          <div class="fact"><span class="k">Vraagprijs:</span> <span class="v">€ 160.500 (facultatief maar aanbevolen)</span></div>
+          <div class="fact"><span class="k">Exact perceel:</span> <span class="v">later opvragen bij notaris</span></div>
+          <div class="fact"><span class="k">Advertentielink:</span> <span class="v"><a href="..." target="_blank" rel="noopener">https://www.seloger.com/annonces/achat/maison/montreuil-62/247894511.htm</a> <button class="link-mini" data-action="copy-full-link">Kopieer volledige link</button></span></div>
+          -->
         </div>
+      </div>
 
-        <div class="recipient">
-          <h3>Makelaar</h3>
-          <div class="radio-row" data-recipient="agent">
-            <label><input type="radio" name="channel-agent" value="email" checked> E-mail</label>
-            <label><input type="radio" name="channel-agent" value="dm"> Persoonlijk bericht (PB/DM)</label>
-            <label><input type="radio" name="channel-agent" value="phone"> Telefoon (script)</label>
-            <label><input type="radio" name="channel-agent" value="letter"> Brief</label>
-          </div>
-          <div class="row">
-            <label for="lang-agent" class="muted small">Taal</label>
-            <select id="lang-agent">
-              <option value="nl" selected>Nederlands</option>
-              <option value="fr">Frans</option>
-              <option value="en">Engels</option>
-            </select>
-          </div>
-          <button id="btn-agent" class="btn" type="button">Maak bericht voor makelaar (NL)</button>
-        </div>
+      <div class="result-section">
+        <h3>2. Omgevingsdossier</h3>
+        <div id="env-badges" class="badge-row"><!-- ✅ / — badges --></div>
+        <div id="env-links" class="env-links"><!-- GPU / Géorisques / DVF links --></div>
+      </div>
 
-        <div class="recipient">
-          <h3>Verkoper</h3>
-          <div class="radio-row" data-recipient="seller">
-            <label><input type="radio" name="channel-seller" value="email" checked> E-mail</label>
-            <label><input type="radio" name="channel-seller" value="dm"> Persoonlijk bericht (PB/DM)</label>
-            <label><input type="radio" name="channel-seller" value="phone"> Telefoon (script)</label>
-            <label><input type="radio" name="channel-seller" value="letter"> Brief</label>
+      <div class="result-section">
+        <h3>3. Actieplan</h3>
+        <ul id="actieplan-list" class="bullet-list"></ul>
+      </div>
+
+      <div class="result-section">
+        <h3>Bijlage A: SWOT</h3>
+        <div class="swot-grid" id="swot-grid">
+          <div class="swot-cell">
+            <h4>Sterke punten</h4>
+            <ul id="swot-sterke" class="bullet-list"></ul>
           </div>
-          <div class="row">
-            <label for="lang-seller" class="muted small">Taal</label>
-            <select id="lang-seller">
-              <option value="fr">Frans</option>
-              <option value="nl" selected>Nederlands</option>
-              <option value="en">Engels</option>
-            </select>
+          <div class="swot-cell">
+            <h4>Mogelijke zorgpunten</h4>
+            <ul id="swot-zorg" class="bullet-list"></ul>
           </div>
-          <button id="btn-seller" class="btn" type="button">Maak bericht aan verkoper (FR/NL)</button>
+          <div class="swot-cell">
+            <h4>Mogelijke kansen</h4>
+            <ul id="swot-kansen" class="bullet-list"></ul>
+          </div>
+          <div class="swot-cell">
+            <h4>Mogelijke bedreigingen</h4>
+            <ul id="swot-bedreigingen" class="bullet-list"></ul>
+          </div>
         </div>
+        <div class="warning" id="coup-warning" hidden>
+          <strong>Pas op voor ‘coup de cœur’</strong>: deze term wordt vaak door makelaars gebruikt, maar suggereert een
+          aankoop op basis van emoties, niet van rationele afwegingen.
+        </div>
+      </div>
+
+      <div class="result-section">
+        <p class="disclaimer">
+          Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen
+          (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.
+        </p>
       </div>
     </section>
 
-    <!-- Gecomposeerde tekst -->
-    <section id="letter-panel" class="card" hidden>
-      <h2>Direct contact</h2>
-      <div id="letter-output"></div>
-    </section>
+    <!-- Direct contact (reveal na dossier/PDF) ------------------------------->
+    <section id="contact" class="card contact-card" aria-labelledby="contact-title" hidden>
+      <h2 id="contact-title">Direct contact</h2>
+      <p class="muted">Kies per ontvanger het kanaal en de taal. De knoptekst past zich automatisch aan.</p>
 
-    <section class="card muted">
-      <p class="small">
-        Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.
-      </p>
+      <div class="contact-row" data-role="notary">
+        <div class="contact-who">Notaris</div>
+        <div class="contact-controls">
+          <div class="radio-group">
+            <label><input type="radio" name="channel-notary" value="email" checked> E-mail</label>
+            <label><input type="radio" name="channel-notary" value="pb"> PB/DM</label>
+            <label><input type="radio" name="channel-notary" value="phone"> Telefoon</label>
+            <label><input type="radio" name="channel-notary" value="letter"> Brief</label>
+          </div>
+          <div class="radio-group">
+            <label><input type="radio" name="lang-notary" value="fr" checked> FR</label>
+            <label><input type="radio" name="lang-notary" value="nl"> NL</label>
+            <label><input type="radio" name="lang-notary" value="en"> EN</label>
+          </div>
+        </div>
+        <div class="contact-action">
+          <button id="btn-compose-notary" class="btn btn-primary btn-compact" data-recipient="notary">Maak bericht voor notaris</button>
+        </div>
+      </div>
+
+      <div class="contact-row" data-role="agent">
+        <div class="contact-who">Makelaar</div>
+        <div class="contact-controls">
+          <div class="radio-group">
+            <label><input type="radio" name="channel-agent" value="email" checked> E-mail</label>
+            <label><input type="radio" name="channel-agent" value="pb"> PB/DM</label>
+            <label><input type="radio" name="channel-agent" value="phone"> Telefoon</label>
+            <label><input type="radio" name="channel-agent" value="letter"> Brief</label>
+          </div>
+          <div class="radio-group">
+            <label><input type="radio" name="lang-agent" value="nl" checked> NL</label>
+            <label><input type="radio" name="lang-agent" value="fr"> FR</label>
+            <label><input type="radio" name="lang-agent" value="en"> EN</label>
+          </div>
+        </div>
+        <div class="contact-action">
+          <button id="btn-compose-agent" class="btn btn-primary btn-compact" data-recipient="agent">Maak bericht voor makelaar</button>
+        </div>
+      </div>
+
+      <div class="contact-row" data-role="seller">
+        <div class="contact-who">Verkoper</div>
+        <div class="contact-controls">
+          <div class="radio-group">
+            <label><input type="radio" name="channel-seller" value="email" checked> E-mail</label>
+            <label><input type="radio" name="channel-seller" value="pb"> PB/DM</label>
+            <label><input type="radio" name="channel-seller" value="phone"> Telefoon</label>
+            <label><input type="radio" name="channel-seller" value="letter"> Brief</label>
+          </div>
+          <div class="radio-group">
+            <label><input type="radio" name="lang-seller" value="nl" checked> NL</label>
+            <label><input type="radio" name="lang-seller" value="fr"> FR</label>
+            <label><input type="radio" name="lang-seller" value="en"> EN</label>
+          </div>
+        </div>
+        <div class="contact-action">
+          <button id="btn-compose-seller" class="btn btn-primary btn-compact" data-recipient="seller">Maak bericht aan verkoper</button>
+        </div>
+      </div>
+
+      <div id="compose-output" class="compose-output" hidden>
+        <h3>Gegenereerd bericht</h3>
+        <pre id="compose-text" class="mono"></pre>
+      </div>
     </section>
   </main>
 
-  <!-- Cachebuster zodat je zeker de nieuwste JS draait -->
-  <script src="/script.js?v=ui-hooks2" defer></script>
+  <footer class="site-footer">
+    <div class="container">
+      <small class="muted">
+        Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen
+        (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.
+      </small>
+    </div>
+  </footer>
+
+  <script src="/script.js?v=ui-showpipe-1" defer></script>
 </body>
 </html>
