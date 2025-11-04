@@ -1,178 +1,136 @@
+<!-- /public/index.html -->
 <!DOCTYPE html>
 <html lang="nl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Immodiagnostique – Indicatief hulpmiddel voor woningonderzoek</title>
-  <meta name="description" content="Immodiagnostique — Indicatief hulpmiddel bij woningonderzoek in Frankrijk. Een concept van Infofrankrijk.com." />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>IMMODIAGNOSTIQUE – Vastgoed-vooronderzoek</title>
+  <meta name="description" content="IMMODIAGNOSTIQUE – Indicatief vastgoed-vooronderzoek met officiële bronnen (Géorisques, DVF, GPU) en AI-rapportage."/>
+  <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
   <header class="site-header">
     <div class="container">
-      <h1 class="app-title">IMMODIAGNOSTIQUE</h1>
-      <p class="subtitle">Een concept van <strong>Infofrankrijk.com</strong> · <span class="muted">Indicatief hulpmiddel (geen juridisch advies)</span></p>
+      <h1 class="brand">IMMODIAGNOSTIQUE</h1>
+      <p class="subtitle">Een concept van <strong>Infofrankrijk.com</strong></p>
     </div>
   </header>
 
   <main class="container">
-    <!-- Instructie -->
-    <section class="card soft" aria-labelledby="intro-title">
-      <h2 id="intro-title">Stap 1: Genereer het dossier</h2>
-      <p class="muted">Plak ook de advertentietekst. Heb je nog geen exact adres? Vul dan alleen <strong>plaats</strong> en <strong>vraagprijs</strong> in.</p>
+    <!-- Intro / uitleg -->
+    <section class="intro">
+      <h2>Stap 1: Maak dossier</h2>
+      <p class="muted">
+        Vul één adres in, óf plak een advertentielink. <strong>Plak ook de advertentietekst</strong> zodat we meer context hebben.
+        Heb je (nog) geen exact adres? Geen probleem — we starten met de plaatsnaam.
+      </p>
     </section>
 
-    <!-- Formulier -->
-    <section class="card" aria-labelledby="form-title">
-      <h2 id="form-title">Invoer</h2>
+    <!-- Invoerformulier -->
+    <section class="input-grid">
+      <div class="field">
+        <label for="adLink">Advertentielink <span class="muted">(optioneel)</span></label>
+        <input id="adLink" type="url" placeholder="https://www.nederlanders.fr/..." autocomplete="off"/>
+      </div>
 
-      <form id="input-form" novalidate>
-        <div class="form-grid">
-          <div class="form-field">
-            <label for="adLink">Advertentielink <span class="optional">(optioneel)</span></label>
-            <input id="adLink" name="adLink" type="url" placeholder="https://www.nederlanders.fr/..." inputmode="url" autocomplete="off">
-            <div class="helper">Link naar de advertentie, indien beschikbaar.</div>
-          </div>
+      <div class="field required">
+        <label for="city">Plaatsnaam <span class="req">*</span></label>
+        <input id="city" type="text" placeholder="Bijv: Montreuil-sur-Mer" autocomplete="off" required/>
+      </div>
 
-          <div class="form-field required">
-            <label for="city">Plaatsnaam <span class="req">*</span></label>
-            <input id="city" name="city" type="text" placeholder="Bijv: Nantes" required autocomplete="address-level2">
-          </div>
+      <div class="field">
+        <label for="price">Vraagprijs <span class="muted">(optioneel)</span></label>
+        <input id="price" type="number" min="0" step="1000" placeholder="Bijv: 250000" autocomplete="off"/>
+      </div>
 
-          <div class="form-field required">
-            <label for="price">Vraagprijs <span class="req">*</span></label>
-            <input id="price" name="price" type="text" placeholder="Bijv: € 325.000" required inputmode="text" autocomplete="off">
-            <div class="helper">Schatting of vraagprijs uit de advertentie.</div>
-          </div>
+      <div class="field">
+        <label for="postcode">Postcode</label>
+        <input id="postcode" type="text" placeholder="Bijv: 62170" autocomplete="off"/>
+      </div>
 
-          <div class="form-field">
-            <label for="postcode">Postcode</label>
-            <input id="postcode" name="postcode" type="text" placeholder="Bijv: 44000" inputmode="numeric" autocomplete="postal-code">
-          </div>
+      <div class="field">
+        <label for="street">Straatnaam</label>
+        <input id="street" type="text" placeholder="Bijv: Rue Pasteur" autocomplete="off"/>
+      </div>
 
-          <div class="form-field">
-            <label for="street">Straatnaam</label>
-            <input id="street" name="street" type="text" placeholder="Bijv: Rue Pasteur" autocomplete="address-line1">
-          </div>
+      <div class="field">
+        <label for="number">Huisnummer</label>
+        <input id="number" type="text" placeholder="Bijv: 22" autocomplete="off"/>
+      </div>
 
-          <div class="form-field">
-            <label for="number">Huisnummer</label>
-            <input id="number" name="number" type="text" placeholder="Bijv: 22" autocomplete="address-line2">
-          </div>
-        </div>
+      <div class="field field--full">
+        <label for="adText">Advertentietekst <span class="muted">(optioneel)</span></label>
+        <textarea id="adText" rows="6" placeholder="Plak hier de volledige advertentietekst (Ctrl+A → Ctrl+C → Ctrl+V)"></textarea>
+      </div>
+    </section>
 
-        <div class="form-field">
-          <label for="adText">Advertentietekst <span class="optional">(optioneel)</span></label>
-          <textarea id="adText" name="adText" rows="6" placeholder="Plak hier de volledige advertentietekst (Ctrl+A → Ctrl+C → Ctrl+V)"></textarea>
-        </div>
-
-        <div class="actions">
-          <button id="btn-generate" class="btn primary" type="button">Genereer dossier</button>
-          <button id="btn-make-prompt" class="btn secondary" type="button">Maak AI-prompt</button>
-        </div>
-      </form>
+    <!-- Primaire acties -->
+    <section class="actions">
+      <button id="btn-generate" class="btn btn-primary">Maak dossier</button>
+      <button id="btn-fetch" class="btn">Haal gegevens op</button>
+      <!-- Legacy knop (verborgen door script.js) -->
+      <button id="btn-make-prompt" class="btn" style="display:none">Maak AI-prompt</button>
     </section>
 
     <!-- Contactkanaal -->
-    <section class="card" aria-labelledby="channel-title">
-      <h2 id="channel-title">Contactkanaal</h2>
-      <p class="muted tiny">Kies hoe je de tegenpartij wilt benaderen. Dit beïnvloedt straks de toon/structuur.</p>
-
-      <fieldset class="box" style="border:none; padding:12px;">
-        <legend class="tiny muted" style="padding:0 6px;">Kanaal</legend>
-        <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center;">
-          <label><input type="radio" name="channel" value="email" checked> E-mail</label>
-          <label><input type="radio" name="channel" value="pb"> Persoonlijk bericht (PB)</label>
-          <label><input type="radio" name="channel" value="phone"> Telefoon (script)</label>
-          <label><input type="radio" name="channel" value="letter"> Brief</label>
-        </div>
-      </fieldset>
-
-      <div class="form-field" style="margin-top:10px;">
-        <label for="compose-language">Taal voor bericht aan verkoper</label>
-        <select id="compose-language" name="compose-language">
-          <option value="NL" selected>Nederlands</option>
-          <option value="FR">Frans</option>
-          <option value="FR/NL">Frans/Nederlands</option>
-        </select>
-        <div class="helper">Taalkeuze geldt met name voor de knoppen hieronder (rol-specifieke sjablonen).</div>
+    <section class="channel">
+      <h3>Contactkanaal</h3>
+      <div class="radio-row">
+        <label class="radio">
+          <input type="radio" name="channel" value="email" checked />
+          <span>E-mail</span>
+        </label>
+        <label class="radio">
+          <input type="radio" name="channel" value="pb" />
+          <span>Persoonlijk bericht (PB/DM)</span>
+        </label>
+        <label class="radio">
+          <input type="radio" name="channel" value="phone" />
+          <span>Telefoon (script)</span>
+        </label>
+        <label class="radio">
+          <input type="radio" name="channel" value="letter" />
+          <span>Brief</span>
+        </label>
       </div>
+    </section>
 
-      <div class="actions stack">
-        <div class="compose-row">
-          <button id="btn-notary" class="btn primary" type="button" data-role="notary-fr">Maak notarisbrief (FR)</button>
-          <button id="btn-agent" class="btn primary" type="button" data-role="agent-nl">Maak makelaarsbrief (NL)</button>
-          <button id="btn-seller" class="btn primary" type="button" data-role="seller-mixed">Maak brief aan verkoper (FR/NL)</button>
-        </div>
-        <p class="muted tiny">Opmerking: veel advertenties hebben in het begin géén exact adres. Begin dan met plaats + vraagprijs en benader makelaar/verkoper eerst. Zodra adres/kadastrale data bekend is, ga verder met de dossierstapjes.</p>
+    <!-- Compose knoppen -->
+    <section class="compose">
+      <h3>Direct contact</h3>
+      <div class="compose-row">
+        <button id="btn-notary" class="btn">Maak bericht voor notaris (FR)</button>
+        <button id="btn-agent"  class="btn">Maak bericht voor makelaar (NL)</button>
+        <button id="btn-seller" class="btn">Maak bericht aan verkoper (FR/NL)</button>
       </div>
     </section>
 
     <!-- Resultaatpanelen -->
-    <section class="card result" id="dossier-panel" aria-labelledby="dossier-title" hidden>
-      <div class="result-header">
-        <h2 id="dossier-title">Dossier</h2>
-        <span class="badge">Resultaat</span>
-      </div>
-      <div id="dossier-output" class="result-body"></div>
+    <section id="dossier-panel" hidden>
+      <h2>Dossier</h2>
+      <div id="dossier-output" class="panel"></div>
     </section>
 
-    <section class="card result" id="overview-panel" aria-labelledby="overview-title" hidden>
-      <div class="result-header">
-        <h2 id="overview-title">AI-overzicht</h2>
-        <span class="badge">Samenvatting</span>
-      </div>
-      <div id="overview-output" class="result-body"></div>
+    <section id="overview-panel" hidden>
+      <h2>AI-overzicht</h2>
+      <div id="overview-output" class="panel"></div>
     </section>
 
-    <section class="card result" id="letter-panel" aria-labelledby="letter-title" hidden>
-      <div class="result-header">
-        <h2 id="letter-title">Bericht / brief (voorbeeld)</h2>
-        <span class="badge">Resultaat</span>
-      </div>
-      <div id="letter-output" class="result-body"></div>
+    <section id="letter-panel" hidden>
+      <h2>Communicatie</h2>
+      <div id="letter-output" class="panel"></div>
     </section>
 
     <!-- Disclaimer -->
-    <section class="card soft" aria-labelledby="disclaimer-title">
-      <h2 id="disclaimer-title">Disclaimer</h2>
-      <p class="muted">
-        Deze tool is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen
-        (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.
-        <strong>Tip:</strong> Zie je een advertentie zonder adres? Start met plaats + vraagprijs en
-        benader eerst de makelaar of verkoper met gerichte vragen. Zodra adres/sectie/perceel bekend is, ga verder
-        met het dossier.
+    <section class="disclaimer">
+      <p class="muted small">
+        Disclaimer: Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme).
+        Aan deze tool kunnen geen rechten worden ontleend. Voorkom een overhaaste “coup de cœur”: weeg rustig af, bepaal de totale acquisitiekosten (incl. makelaar en notaris),
+        en plan verbouwingskosten realistisch in. Tip: de koper kan een eigen notaris kiezen; de cumulatieve notariskosten blijven in de praktijk gelijk.
       </p>
-      <details class="links">
-        <summary>Handige bronnen openen</summary>
-        <ul>
-          <li><a href="https://www.georisques.gouv.fr/" target="_blank" rel="noopener">Géorisques (officiële risico’s)</a></li>
-          <li><a href="https://app.dvf.etalab.gouv.fr/" target="_blank" rel="noopener">DVF (verkoopprijzen)</a></li>
-          <li><a href="https://www.geoportail-urbanisme.gouv.fr/map/" target="_blank" rel="noopener">Géoportail Urbanisme (PLU/SUP)</a></li>
-          <li><a href="https://www.data.gouv.fr/" target="_blank" rel="noopener">data.gouv.fr (open data)</a></li>
-        </ul>
-      </details>
     </section>
   </main>
 
-  <footer class="site-footer">
-    <div class="container">
-      <p class="tiny muted">&copy; <span id="year"></span> Immodiagnostique · Infofrankrijk.com</p>
-    </div>
-  </footer>
-
-  <script>
-    document.getElementById('year').textContent = new Date().getFullYear();
-
-    // Smooth reveal helper voor SSR/empty states (script.js neemt het over)
-    function smoothReveal(panel) {
-      if (panel.hasAttribute('hidden')) panel.removeAttribute('hidden');
-      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  </script>
-  <script src="/public/script.js" defer></script>
+  <script defer src="script.js"></script>
 </body>
 </html>
