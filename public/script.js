@@ -1,194 +1,367 @@
-/* public/script.js — IMMODIAGNOSTIQUE UI glue (compact, POST /api/summary + DVF fetch) */
+/* /public/script.js — UI-flow: voortgang, summary→DVF→analyse, rapport render */
 
-/* ---------- DOM refs ---------- */
-const ui = {
-  form: document.getElementById('form'),
-  city: document.getElementById('city'),
-  postcode: document.getElementById('postcode'),
-  price: document.getElementById('price'),
-  street: document.getElementById('street'),
-  housenr: document.getElementById('housenr'),
-  advert: document.getElementById('advert'),
-  link: document.getElementById('link'),
+(function () {
+  // ---- DOM utils ----
+  const $ = (sel) => document.querySelector(sel);
+  const $all = (sel) => Array.from(document.querySelectorAll(sel));
 
-  btnGenerate: document.getElementById('btn-generate'),
-  btnCancel: document.getElementById('btn-cancel'),
-  spinner: document.getElementById('spinner'),
-  spinnerLabel: document.getElementById('spinner-label'),
-  progressLog: document.getElementById('progress-log'),
+  // Elements
+  const btnGenerate = $('#btn-generate');
+  const btnCancel = $('#btn-cancel');
+  const btnExport = $('#btn-export');
 
-  // secties waar we output tonen
-  outDossier: document.getElementById('out-dossier'),
-  outEnv: document.getElementById('out-env'),
-  outLinks: document.getElementById('out-links'),
-};
+  const spinner = $('#progress-spinner');
+  const spinnerLabel = $('#spinner-label');
 
-/* ---------- helpers ---------- */
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const pipeline = $('#progress-pipeline');
+  const logBox = $('#progress-log');
 
-function setSpinner(on, label = '') {
-  if (!ui.spinner) return;
-  ui.spinner.style.display = on ? 'inline-block' : 'none';
-  if (ui.spinnerLabel) ui.spinnerLabel.textContent = label || '';
-}
+  const resultCard = $('#result');
+  const contactCard = $('#contact');
 
-function clearLog() {
-  if (ui.progressLog) ui.progressLog.innerHTML = '';
-}
+  const keyfacts = $('#keyfacts');
+  const envBadges = $('#env-badges');
+  const envLinks = $('#env-links');
+  const actieplanList = $('#actieplan-list');
+  const swSterke = $('#swot-sterke');
+  const swZorg = $('#swot-zorg');
+  const swKansen = $('#swot-kansen');
+  const swBedr = $('#swot-bedreigingen');
 
-function appendLog(msg) {
-  if (!ui.progressLog) return;
-  const li = document.createElement('div');
-  li.textContent = `${new Date().toLocaleTimeString()} · ${msg}`;
-  ui.progressLog.appendChild(li);
-}
+  // ---- State & helpers ----
+  let aborter = null;
 
-function getCityPostcode() {
-  return {
-    city: (ui.city?.value || '').trim(),
-    postcode: (ui.postcode?.value || '').trim(),
-  };
-}
+  const STEP_KEYS = ['commune','gpu','gpudoc','dvf','georisques','ai'];
 
-function renderDossier(summary, dvf) {
-  if (!ui.outDossier) return;
-  const insee = summary?.meta?.insee || summary?.commune?.insee || '(onbekend)';
-  const name = summary?.commune?.name || (summary?.input?.city || '(n.v.t.)');
-  const pc = (summary?.commune?.postcodes && summary.commune.postcodes[0]) || (summary?.input?.postcode || '');
+  function resetProgress() {
+    // spinner uit en label leeg
+    if (spinner) spinner.style.display = 'none';
+    if (spinnerLabel) spinnerLabel.textContent = '';
 
-  const dvfLine = dvf?.summary?.median_eur_m2
-    ? `DVF mediaan (€/m²): ${dvf.summary.median_eur_m2}`
-    : `DVF: ${dvf?.source === 'departement-fallback' ? 'geen gemeente-JSON, departement gebruikt' : 'n.v.t.'}`;
+    // pipeline reset
+    STEP_KEYS.forEach(k => setStepState(k, 'idle', ''));
 
-  ui.outDossier.innerHTML = `
-    <h2>1. Vastgoeddossier</h2>
-    <p><strong>Gemeente:</strong> ${name} (${pc}) — <strong>INSEE:</strong> ${insee}</p>
-    <p>${dvfLine}</p>
-  `;
-}
-
-function renderEnv(summary) {
-  if (!ui.outEnv) return;
-  const links = summary?.georisques?.links || {};
-  const gpu = summary?.gpu?.links || {};
-  ui.outEnv.innerHTML = `
-    <h2>2. Omgevingsdossier</h2>
-    <ul>
-      <li>Géorisques (gemeente): ${links.commune ? `<a href="${links.commune}" target="_blank" rel="noopener">open</a>` : '—'}</li>
-      <li>GPU (PLU/zonering): ${gpu.gpu_site_commune ? `<a href="${gpu.gpu_site_commune}" target="_blank" rel="noopener">open</a>` : '—'}</li>
-    </ul>
-  `;
-}
-
-function renderLinks(dvf) {
-  if (!ui.outLinks) return;
-  const l = dvf?.links || {};
-  ui.outLinks.innerHTML = `
-    <h2>Referenties</h2>
-    <ul>
-      <li>DVF (Etalab app): ${l.etalab_app ? `<a href="${l.etalab_app}" target="_blank" rel="noopener">open</a>` : '—'}</li>
-      <li>Commune JSON: ${l.commune_json ? `<a href="${l.commune_json}" target="_blank" rel="noopener">${l.commune_json}</a>` : '—'}</li>
-      <li>Departement CSV: ${l.dep_csv_gz ? `<a href="${l.dep_csv_gz}" target="_blank" rel="noopener">${l.dep_csv_gz}</a>` : '—'}</li>
-      <li>Departement Parquet: ${l.dep_parquet ? `<a href="${l.dep_parquet}" target="_blank" rel="noopener">${l.dep_parquet}</a>` : '—'}</li>
-    </ul>
-  `;
-}
-
-/* ---------- hoofdactie ---------- */
-let aborter = null;
-
-async function runMakeDossier() {
-  // reset UI
-  setSpinner(true, 'Analyseert…');
-  clearLog();
-  ui.outDossier && (ui.outDossier.innerHTML = '');
-  ui.outEnv && (ui.outEnv.innerHTML = '');
-  ui.outLinks && (ui.outLinks.innerHTML = '');
-
-  if (aborter) {
-    try { aborter.abort(); } catch {}
+    // log leeg
+    if (logBox) logBox.innerHTML = '';
   }
-  aborter = new AbortController();
 
-  try {
-    appendLog('Dossier wordt opgebouwd…');
-    await sleep(300); // klein effect
+  function showSpinner(on, label='Dossier wordt opgebouwd…') {
+    if (spinner) spinner.style.display = on ? 'inline-block' : 'none';
+    if (spinnerLabel) spinnerLabel.textContent = on ? label : '';
+  }
 
-    // 1) SUMMARY (POST { city, postcode })
-    const { city, postcode } = getCityPostcode();
-    appendLog('Raadpleegt gemeente…');
+  function setStepState(step, state, metaText) {
+    const li = pipeline?.querySelector(`.pipe-step[data-step="${step}"]`);
+    if (!li) return;
+    li.setAttribute('data-state', state); // idle | active | done | error | skip
+    const meta = li.querySelector('.pipe-meta');
+    if (meta && metaText != null) meta.textContent = metaText;
+  }
 
-    if (!city) throw new Error('Vul minstens de plaatsnaam in.');
+  function logProgress(msg) {
+    if (!logBox) return;
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    const ss = String(now.getSeconds()).padStart(2,'0');
+    const p = document.createElement('p');
+    p.textContent = `${hh}:${mm}:${ss} · ${msg}`;
+    logBox.appendChild(p);
+    // autoscroll
+    logBox.scrollTop = logBox.scrollHeight;
+  }
 
-    const rSum = await fetch('/api/summary', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ city, postcode }),
-      signal: aborter.signal,
-    });
-    if (!rSum.ok) {
-      const txt = await rSum.text();
-      throw new Error(`HTTP ${rSum.status} @ /api/summary: ${txt}`);
+  function cleanAdLink(url) {
+    try {
+      const u = new URL(url);
+      u.search = '';
+      u.hash = '';
+      return u.toString();
+    } catch {
+      return url || '';
     }
-    const summary = await rSum.json();
-    appendLog('✔ Raadpleegt gemeente…');
+  }
 
-    const insee =
-      summary?.meta?.insee ||
-      summary?.commune?.insee ||
-      null;
-
-    // 2) DVF (alleen als INSEE)
-    let dvf = null;
-    if (insee) {
-      appendLog('Controleert DVF (verkoopprijzen)…');
-      const rDvf = await fetch(`/api/dvf?insee=${encodeURIComponent(insee)}`, {
-        signal: aborter.signal,
-      });
-      if (!rDvf.ok) {
-        const txt = await rDvf.text();
-        throw new Error(`HTTP ${rDvf.status} @ /api/dvf: ${txt}`);
+  function euro(v) {
+    if (v == null || v === '') return '—';
+    try {
+      const n = Number(v);
+      if (Number.isFinite(n)) {
+        return n.toLocaleString('nl-NL', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
       }
-      dvf = await rDvf.json();
-      appendLog('✔ DVF opgehaald');
-    } else {
-      appendLog('ℹ Geen INSEE: DVF wordt overgeslagen');
+    } catch {}
+    return String(v);
+  }
+
+  function disableDuringRun(disabled) {
+    if (btnGenerate) btnGenerate.disabled = disabled;
+    if (btnCancel) btnCancel.hidden = !disabled;
+    if (btnExport) btnExport.hidden = true; // pas na rapport tonen
+  }
+
+  function collectInput() {
+    const city = $('#city')?.value?.trim() || '';
+    const postcode = $('#postcode')?.value?.trim() || '';
+    const price = $('#price')?.value?.trim() || '';
+    const advertLink = $('#advert-link')?.value?.trim() || '';
+    const adText = $('#ad-text')?.value?.trim() || '';
+    const street = $('#street')?.value?.trim() || '';
+    const housenr = $('#housenr')?.value?.trim() || '';
+
+    return { city, postcode, price, advertLink, adText, street, housenr };
+  }
+
+  // ---- Render rapport ----
+  function renderReport({ input, summary, dvf, analysis }) {
+    // Toon result + contact
+    if (resultCard) resultCard.hidden = false;
+    if (contactCard) contactCard.hidden = false;
+    if (btnExport) btnExport.hidden = false;
+
+    // Keyfacts
+    if (keyfacts) {
+      const facts = [];
+      const invoer = [input.postcode, input.city].filter(Boolean).join(' ');
+      facts.push(fact('Invoer', invoer || '—'));
+      facts.push(fact('Vraagprijs', input.price ? `${euro(input.price)} (facultatief maar aanbevolen)` : '—'));
+      facts.push(fact('Exact perceel', 'later opvragen bij notaris'));
+
+      if (input.advertLink) {
+        const cleaned = cleanAdLink(input.advertLink);
+        const fullBtn = `<button class="link-mini" data-action="copy-full-link" data-url="${input.advertLink}">Kopieer volledige link</button>`;
+        facts.push(fact('Advertentielink', `<a href="${cleaned}" target="_blank" rel="noopener">${cleaned}</a> ${fullBtn}`));
+      }
+
+      if (summary?.commune?.insee) {
+        facts.push(fact('Gemeente', `${summary.commune.name || '—'}`));
+        facts.push(fact('INSEE', summary.commune.insee));
+        const dep = summary.commune.department;
+        if (dep?.code) {
+          facts.push(fact('Departement', `${dep.code} ${dep.name ? `(${dep.name})` : ''}`));
+        }
+      }
+      keyfacts.innerHTML = facts.join('');
     }
 
-    // 3) Render
-    renderDossier(summary, dvf);
-    renderEnv(summary);
-    renderLinks(dvf);
+    // Omgevingsbadges (op basis van summary.georisques.summary[] booleans)
+    if (envBadges) {
+      envBadges.innerHTML = '';
+      const s = summary?.georisques?.summary;
+      const items = [
+        { key:'flood', label:'Overstroming' },
+        { key:'coastal', label:'Kust' },
+        { key:'industrial', label:'Industrieel' },
+        { key:'seismic', label:'Seismisch' },
+        { key:'radon', label:'Radon' },
+        { key:'clay', label:'Klei/krimp' },
+        { key:'forestfire', label:'Bosbrand' },
+      ];
+      items.forEach(it => {
+        const present = Array.isArray(s) ? !!s.find(x => x.key === it.key && x.present === true) : false;
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + (present ? 'ok' : 'na');
+        badge.textContent = (present ? '✅ ' : '— ') + it.label;
+        envBadges.appendChild(badge);
+      });
+    }
 
-    appendLog('✔ Analyse gereed');
-  } catch (err) {
-    console.error(err);
-    appendLog(`⛔ Fout: ${err.message}`);
-    alert(`Er ging iets mis: ${err.message}`);
-  } finally {
-    setSpinner(false, '');
+    // Omgevingslinks
+    if (envLinks) {
+      const links = [];
+      const l1 = summary?.gpu?.links?.gpu_site_commune || summary?.gpudoc?.links?.gpu_recherche;
+      const l2 = summary?.georisques?.links?.commune || summary?.georisques?.links?.search;
+      const l3 = summary?.dvf?.links?.etalab_app;
+
+      if (l1) links.push(linkBox('Géoportail Urbanisme', l1));
+      if (l2) links.push(linkBox('Géorisques – gemeente', l2));
+      if (l3) links.push(linkBox('DVF – Etalab', l3));
+      envLinks.innerHTML = links.join('');
+    }
+
+    // Actieplan
+    if (actieplanList) {
+      actieplanList.innerHTML = '';
+      const items = analysis?.actieplan || [];
+      (Array.isArray(items) ? items : []).forEach(line => {
+        const li = document.createElement('li');
+        li.textContent = line.replace(/^•\s*/, '');
+        actieplanList.appendChild(li);
+      });
+    }
+
+    // SWOT
+    fillList(swSterke, analysis?.swot?.sterke_punten);
+    fillList(swZorg, analysis?.swot?.mogelijke_zorgpunten);
+    fillList(swKansen, analysis?.swot?.mogelijke_kansen);
+    fillList(swBedr, analysis?.swot?.mogelijke_bedreigingen);
+
+    // event: copy full advert link
+    keyfacts?.addEventListener('click', (e) => {
+      const t = e.target;
+      if (t && t.matches && t.matches('[data-action="copy-full-link"]')) {
+        const url = t.getAttribute('data-url') || '';
+        navigator.clipboard?.writeText(url).then(()=>{
+          t.textContent = 'Gekopieerd!';
+          setTimeout(()=>{ t.textContent = 'Kopieer volledige link'; }, 1200);
+        });
+      }
+    });
   }
-}
 
-/* ---------- annuleren ---------- */
-function cancelRun() {
-  if (aborter) {
-    try { aborter.abort(); } catch {}
-    appendLog('⏹ Afgebroken op verzoek');
-    setSpinner(false, '');
+  function fact(k, vHtml) {
+    return `<div class="fact"><span class="k">${k}:</span> <span class="v">${vHtml}</span></div>`;
   }
-}
+  function linkBox(label, href) {
+    return `<a class="env-link" href="${href}" target="_blank" rel="noopener">${label}</a>`;
+  }
+  function fillList(ul, items) {
+    if (!ul) return;
+    ul.innerHTML = '';
+    const arr = Array.isArray(items) ? items : [];
+    if (!arr.length) {
+      const li = document.createElement('li');
+      li.textContent = '—';
+      ul.appendChild(li);
+      return;
+    }
+    arr.forEach(x=>{
+      const li = document.createElement('li');
+      li.textContent = String(x).replace(/^•\s*/, '');
+      ul.appendChild(li);
+    });
+  }
 
-/* ---------- events ---------- */
-function wire() {
-  if (ui.btnGenerate) ui.btnGenerate.addEventListener('click', (e) => {
-    e.preventDefault();
-    runMakeDossier();
-  });
-  if (ui.btnCancel) ui.btnCancel.addEventListener('click', (e) => {
-    e.preventDefault();
-    cancelRun();
-  });
-}
+  // ---- Flow ----
+  async function runGenerate() {
+    const input = collectInput();
+    if (!input.city) {
+      alert('Plaatsnaam is verplicht.');
+      return;
+    }
 
-document.addEventListener('DOMContentLoaded', wire);
+    // start
+    resetProgress();
+    disableDuringRun(true);
+    showSpinner(true);
+
+    aborter = new AbortController();
+    const signal = aborter.signal;
+
+    try {
+      // Commune via /api/summary (POST)
+      setStepState('commune','active','');
+      logProgress('Raadpleegt gemeente…');
+
+      const sumRes = await fetch('/api/summary', {
+        method: 'POST',
+        headers: { 'content-type':'application/json' },
+        body: JSON.stringify({ city: input.city, postcode: input.postcode }),
+        signal
+      });
+      if (!sumRes.ok) {
+        const txt = await sumRes.text();
+        setStepState('commune','error',`HTTP ${sumRes.status}`);
+        throw new Error(`/api/summary → ${txt}`);
+      }
+      const summary = await sumRes.json();
+      setStepState('commune','done','✔');
+      logProgress('✔ Raadpleegt gemeente…');
+
+      // GPU/gpudoc/georisques: we tonen als “skip” wanneer geen INSEE
+      const hasInsee = !!summary?.commune?.insee;
+      if (!hasInsee) {
+        setStepState('gpu','skip','Geen INSEE');
+        setStepState('gpudoc','skip','Geen INSEE');
+        setStepState('georisques','skip','Geen INSEE');
+        logProgress('ℹ Geen INSEE: beperkt dossier');
+      } else {
+        setStepState('gpu','done','(bekijk link in Omgevingsdossier)');
+        setStepState('gpudoc','done','(bekijk link in Omgevingsdossier)');
+        setStepState('georisques','done','(bekijk link in Omgevingsdossier)');
+      }
+
+      // DVF
+      setStepState('dvf','active','');
+      logProgress('Controleert DVF (verkoopprijzen)…');
+      let dvf = null;
+      if (hasInsee) {
+        const dvfRes = await fetch(`/api/dvf?insee=${encodeURIComponent(summary.commune.insee)}`, { signal });
+        if (dvfRes.ok) {
+          dvf = await dvfRes.json();
+          setStepState('dvf','done', dvf?.summary?.median_eur_m2 != null ? `${dvf.summary.median_eur_m2} €/m²` : 'fallback');
+          logProgress('✔ DVF opgehaald');
+        } else {
+          setStepState('dvf','error', `HTTP ${dvfRes.status}`);
+          logProgress('⚠ DVF niet beschikbaar (HTTP '+dvfRes.status+')');
+        }
+      } else {
+        setStepState('dvf','skip','Geen INSEE');
+      }
+
+      // AI analyse
+      setStepState('ai','active','gemini-2.0-flash');
+      logProgress('Genereert AI-analyse…');
+      const dossierPrompt = buildPrompt(input, summary, dvf);
+      const aRes = await fetch('/api/analyse', {
+        method: 'POST',
+        headers: { 'content-type':'application/json' },
+        body: JSON.stringify({ dossier: dossierPrompt }),
+        signal
+      });
+      if (!aRes.ok) {
+        const txt = await aRes.text();
+        setStepState('ai','error', `HTTP ${aRes.status}`);
+        throw new Error(`/api/analyse → ${txt}`);
+      }
+      const analysis = await aRes.json();
+      setStepState('ai','done','✔');
+      logProgress('✔ Analyse gereed');
+
+      // render
+      renderReport({ input, summary, dvf, analysis: analysis?.output || {} });
+      showSpinner(false);
+      disableDuringRun(false);
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        logProgress('⏹ Afgebroken op verzoek');
+      } else {
+        logProgress(`⚠ Fout: ${err?.message || err}`);
+      }
+      showSpinner(false);
+      disableDuringRun(false);
+    } finally {
+      aborter = null;
+    }
+  }
+
+  function buildPrompt(input, summary, dvf) {
+    const parts = [];
+    parts.push(`Plaats: ${input.city || '—'} ${input.postcode || ''}`.trim());
+    if (summary?.commune?.insee) parts.push(`INSEE: ${summary.commune.insee}`);
+    if (dvf?.summary?.median_eur_m2 != null) parts.push(`DVF mediaan: ${dvf.summary.median_eur_m2} €/m²`);
+    if (input.adText) parts.push(`Advertentietekst: ${input.adText.slice(0, 800)}`);
+    return parts.join(' | ');
+  }
+
+  function cancelRun() {
+    if (aborter) {
+      aborter.abort();
+      aborter = null;
+    }
+  }
+
+  // ---- Export (print) ----
+  function doExport() {
+    window.print();
+  }
+
+  // ---- Wire up ----
+  function init() {
+    resetProgress();
+    if (btnGenerate) btnGenerate.addEventListener('click', runGenerate);
+    if (btnCancel) btnCancel.addEventListener('click', cancelRun);
+    if (btnExport) btnExport.addEventListener('click', doExport);
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
