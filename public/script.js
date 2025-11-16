@@ -1,359 +1,531 @@
 /* public/script.js
- * IMMODIAGNOSTIQUE – UI-logica met voortgangspijplijn, DVF-fallback en rapport-rendering
- * Vereist: index.html zoals in jouw huidige /public en een werkende /api/commune, /api/dvf, /api/analyse
+ * IMMODIAGNOSTIQUE – frontend pipeline
+ * - Commune → INSEE
+ * - DVF (commune or departement fallback)
+ * - Analyse (/api/analyse) met simpele signals
+ * - Resultaat renderen (Vastgoeddossier, Omgeving, Actieplan, SWOT)
+ * - Voortgangspijplijn + spinner + annuleren
  */
 
-/* ============== Helpers ============== */
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+(() => {
+  // --------- DOM refs ---------
+  const form = document.getElementById("dossier-form");
+  const btnGenerate = document.getElementById("btn-generate");
+  const btnCancel = document.getElementById("btn-cancel");
+  const btnExport = document.getElementById("btn-export");
 
-const nowHHMMSS = () => {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
-};
+  const inputAdvert = document.getElementById("advert-link");
+  const inputCity = document.getElementById("city");
+  const inputPrice = document.getElementById("price");
+  const inputPostcode = document.getElementById("postcode");
+  const inputStreet = document.getElementById("street");
+  const inputHouse = document.getElementById("housenr");
+  const inputAdText = document.getElementById("ad-text");
+  const inputArea = document.getElementById("area"); // kan ontbreken; we lezen via selector
 
-const fetchJSON = async (url, opts) => {
-  const r = await fetch(url, { ...opts, headers: { accept: "application/json", ...(opts && opts.headers) } });
-  const txt = await r.text();
-  let json;
-  try { json = txt ? JSON.parse(txt) : null; } catch { json = { ok: false, error: "Invalid JSON", raw: txt }; }
-  if (!r.ok) {
-    const err = new Error(`HTTP ${r.status} @ ${url}`);
-    err.http = r.status;
-    err.payload = json || txt;
-    throw err;
-  }
-  return json;
-};
+  // Progress UI
+  const spinner = document.getElementById("progress-spinner");
+  const spinnerLabel = document.getElementById("spinner-label");
+  const pipeline = document.getElementById("progress-pipeline");
+  const logBox = document.getElementById("progress-log");
 
-const fact = (k, v) => `<div class="fact"><span class="k">${k}:</span> <span class="v">${v}</span></div>`;
-const euro = (n) => new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
-const stripUrl = (u) => {
-  try { const x = new URL(u); x.search = ""; x.hash = ""; return x.toString(); } catch { return u; }
-};
+  // Result UI
+  const resultCard = document.getElementById("result");
+  const keyfactsBox = document.getElementById("keyfacts");
+  const envBadges = document.getElementById("env-badges");
+  const envLinks = document.getElementById("env-links");
+  const actieplanList = document.getElementById("actieplan-list");
 
-/* ============== Voortgang UI ============== */
-const spinner = $("#progress-spinner");
-const spinnerLabel = $("#spinner-label");
-const pipe = $("#progress-pipeline");
-const logBox = $("#progress-log");
+  const swotSterke = document.getElementById("swot-sterke");
+  const swotZorg = document.getElementById("swot-zorg");
+  const swotKansen = document.getElementById("swot-kansen");
+  const swotBedreigingen = document.getElementById("swot-bedreigingen");
 
-const setSpinner = (on, label = "") => {
-  spinner.setAttribute("aria-hidden", on ? "false" : "true");
-  spinner.style.visibility = on ? "visible" : "hidden";
-  spinnerLabel.textContent = label || (on ? "Bezig…" : "Klaar.");
-};
+  const coupWarning = document.getElementById("coup-warning");
 
-const setStep = (name, state, metaText = "") => {
-  const li = pipe.querySelector(`.pipe-step[data-step="${name}"]`);
-  if (!li) return;
-  li.setAttribute("data-state", state); // idle | active | done | error | skipped
-  const meta = li.querySelector(".pipe-meta");
-  if (metaText) meta.textContent = metaText;
-};
+  // Contact UI
+  const contactCard = document.getElementById("contact");
+  const btnComposeNotary = document.getElementById("btn-compose-notary");
+  const btnComposeAgent = document.getElementById("btn-compose-agent");
+  const btnComposeSeller = document.getElementById("btn-compose-seller");
+  const composeOut = document.getElementById("compose-output");
+  const composeText = document.getElementById("compose-text");
 
-const logLine = (msg) => {
-  const p = document.createElement("div");
-  p.textContent = `${nowHHMMSS} · ${msg}`;
-  logBox.appendChild(p);
-  logBox.scrollTop = logBox.scrollHeight;
-};
+  // --------- State ---------
+  let currentAbort = null;
 
-const resetPipeline = () => {
-  setSpinner(false, "Wachten op start…");
-  $$("#progress-pipeline .pipe-step").forEach((li) => {
-    li.setAttribute("data-state", "idle");
-    const meta = li.querySelector(".pipe-meta");
-    if (meta) meta.textContent = "";
-  });
-  logBox.innerHTML = "";
-  logLine("Wachten op start…");
-};
-
-/* ============== Render ============== */
-const envBadges = (geoSummary) => {
-  // geoSummary: array van {key,label,present:boolean}
-  if (!Array.isArray(geoSummary)) return "";
-  return geoSummary.map(s => {
-    const mark = s.present ? "✅" : "—";
-    return `<span class="badge">${mark} ${s.label}</span>`;
-  }).join("");
-};
-
-const swotList = (ul, items) => {
-  ul.innerHTML = "";
-  if (!Array.isArray(items) || !items.length) {
-    ul.innerHTML = "<li>—</li>";
-    return;
-  }
-  items.forEach(t => {
-    const li = document.createElement("li");
-    li.textContent = t.replace(/^•\s*/, "");
-    ul.appendChild(li);
-  });
-};
-
-const renderReport = ({ input, commune, dvf, georisques, analysis }) => {
-  const result = $("#result");
-  const keyfacts = $("#keyfacts");
-  const envRow = $("#env-badges");
-  const envLinks = $("#env-links");
-  const actieplanList = $("#actieplan-list");
-
-  // 1) Key facts
-  const facts = [];
-  const placeStr = [input.postcode, input.city].filter(Boolean).join(" ");
-  if (placeStr) facts.push(fact("Invoer", placeStr));
-  if (Number.isFinite(input.price)) facts.push(fact("Vraagprijs", `${euro(input.price)} (facultatief maar aanbevolen)`));
-  if (Number.isFinite(input.livingArea)) facts.push(fact("Woonoppervlakte", `${input.livingArea} m²`));
-  facts.push(fact("Exact perceel", "later opvragen bij notaris"));
-
-  if (commune?.name || commune?.insee) {
-    if (commune?.name) facts.push(fact("Gemeente", commune.name));
-    if (commune?.insee) facts.push(fact("INSEE", commune.insee));
-  }
-
-  // DVF: status + Etalab-link (altijd), en als aanwezig een indicatieve €/m²
-  if (dvf) {
-    const dep = dvf.dep || commune?.department?.code;
-    if (dvf.source === "departement-fallback") {
-      facts.push(fact("DVF status", `Geen commune-bestand, fallback op departement ${dep || "—"}.`));
-    } else if (dvf.source === "commune" && dvf.summary?.median_eur_m2) {
-      facts.push(fact("DVF mediaan", `${euro(dvf.summary.median_eur_m2)}/m² (indicatief)`));
-      if (Number.isFinite(input.price) && Number.isFinite(input.livingArea) && input.livingArea > 0) {
-        const askPerM2 = Math.round(input.price / input.livingArea);
-        facts.push(fact("Vraagprijs per m²", `${euro(askPerM2)}/m² (ruw)`));
-      }
-    }
-    const etalab = dvf?.links?.etalab_app;
-    if (etalab) {
-      facts.push(fact("DVF (Etalab)", `<a href="${etalab}" target="_blank" rel="noopener">${etalab}</a>`));
-    }
-  }
-
-  // Link naar advertentie (gekuist)
-  if (input.advertLink) {
-    const short = stripUrl(input.advertLink);
-    facts.push(
-      fact(
-        "Advertentielink",
-        `<a href="${short}" target="_blank" rel="noopener">${short}</a> 
-         <button class="link-mini" data-action="copy-full-link" data-url="${input.advertLink}">Kopieer volledige link</button>`
-      )
-    );
-  }
-
-  keyfacts.innerHTML = facts.join("");
-
-  // 2) Omgevingsdossier – badges + links
-  envRow.innerHTML = georisques?.summary ? envBadges(georisques.summary) : "";
-  const linksOut = [];
-  if (commune?.insee) {
-    linksOut.push(`<a href="https://www.geoportail-urbanisme.gouv.fr/recherche?insee=${commune.insee}" target="_blank" rel="noopener">Géoportail Urbanisme</a>`);
-    linksOut.push(`<a href="https://www.georisques.gouv.fr/commune/${commune.insee}" target="_blank" rel="noopener">Géorisques – gemeente</a>`);
-  }
-  envLinks.innerHTML = linksOut.join(" · ");
-
-  // 3) Actieplan (uit analyse of fallback)
-  actieplanList.innerHTML = "";
-  const ap = Array.isArray(analysis?.output?.actieplan) ? analysis.output.actieplan :
-    [
-      "ERP (État des Risques et Pollutions) opvragen zodra exact adres bekend is.",
-      "PLU-zonering en SUP controleren via Géoportail Urbanisme.",
-      "Kadastrale referenties en perceelgrenzen bij de notaris bevestigen.",
-      "Recente DVF-transacties in de directe omgeving vergelijken.",
-      "Staat van installaties (elektra/gas/riolering) laten inspecteren.",
-    ];
-  ap.forEach(t => {
-    const li = document.createElement("li");
-    li.textContent = t.replace(/^•\s*/, "");
-    actieplanList.appendChild(li);
-  });
-
-  // 4) SWOT
-  swotList($("#swot-sterke"), analysis?.output?.swot?.sterke_punten);
-  swotList($("#swot-zorg"), analysis?.output?.swot?.mogelijke_zorgpunten);
-  swotList($("#swot-kansen"), analysis?.output?.swot?.mogelijke_kansen);
-  swotList($("#swot-bedreigingen"), analysis?.output?.swot?.mogelijke_bedreigingen);
-
-  // 5) Toon resultaat + contact
-  result.hidden = false;
-  $("#contact").hidden = false;
-};
-
-/* ============== Main flow ============== */
-const btnGenerate = $("#btn-generate");
-const btnCancel = $("#btn-cancel");
-const btnExport = $("#btn-export");
-const form = $("#dossier-form");
-
-let aborter = null;
-
-const start = async () => {
-  // Reset UI
-  $("#result").hidden = true;
-  $("#contact").hidden = true;
-  resetPipeline();
-  setSpinner(true, "Dossier wordt opgebouwd…");
-  btnGenerate.disabled = true;
-  btnCancel.hidden = false;
-  btnExport.hidden = true;
-
-  // Lees invoer
-  const city = $("#city").value.trim();
-  const postcode = $("#postcode").value.trim();
-  const priceVal = $("#price").value.trim();
-  const areaVal = $("#living-area") ? $("#living-area").value.trim() : "";
-  const street = $("#street").value.trim();
-  const housenr = $("#housenr").value.trim();
-  const adText = $("#ad-text").value.trim();
-  const advertLink = $("#advert-link").value.trim();
-
-  if (!city) {
-    setSpinner(false, "Wachten op invoer");
-    logLine("Fout: Plaatsnaam is verplicht.");
-    alert("Plaatsnaam is verplicht.");
-    btnGenerate.disabled = false;
-    btnCancel.hidden = true;
-    return;
-  }
-
-  const input = {
-    city,
-    postcode,
-    price: priceVal ? Number(priceVal) : undefined,
-    livingArea: areaVal ? Number(areaVal) : undefined,
-    street,
-    housenr,
-    advertLink: advertLink || "",
+  // --------- Utils ---------
+  const nowHHMMSS = () => {
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
   };
 
-  aborter = new AbortController();
-  const signal = aborter.signal;
+  const logLine = (msg) => {
+    const p = document.createElement("div");
+    p.textContent = `${nowHHMMSS()} · ${msg}`;
+    logBox.appendChild(p);
+    logBox.scrollTop = logBox.scrollHeight;
+  };
 
-  try {
-    /* Stap 1 — Commune */
-    setStep("commune", "active");
-    logLine("Raadpleegt gemeente…");
-    const qs = new URLSearchParams();
-    qs.set("city", city);
-    if (postcode) qs.set("postcode", postcode);
-    const commune = await fetchJSON(`/api/commune?${qs}`, { signal });
-    if (!commune?.commune?.insee) throw new Error("Geen INSEE gevonden");
-    setStep("commune", "done", "✔");
-    logLine("✔ Raadpleegt gemeente…");
+  const setSpinner = (on, label = "") => {
+    if (on) {
+      spinner.removeAttribute("aria-hidden");
+      spinner.style.display = "inline-block";
+      spinnerLabel.textContent = label || "Bezig…";
+    } else {
+      spinner.setAttribute("aria-hidden", "true");
+      spinner.style.display = "none";
+      spinnerLabel.textContent = "Klaar.";
+    }
+  };
 
-    /* Stap 2 — DVF */
-    setStep("dvf", "active");
-    logLine("Controleert DVF (verkoopprijzen)…");
-    const dvf = await fetchJSON(`/api/dvf?insee=${commune.commune.insee}`, { signal });
-    setStep("dvf", "done", dvf?.source || "✔");
-    logLine("✔ DVF opgehaald");
+  const resetPipeline = () => {
+    Array.from(pipeline.querySelectorAll(".pipe-step")).forEach((li) => {
+      li.dataset.state = "idle";
+      const meta = li.querySelector(".pipe-meta");
+      if (meta) meta.textContent = "";
+    });
+    logBox.innerHTML = "";
+    spinnerLabel.textContent = "Wachten op start…";
+    setSpinner(false);
+  };
 
-    /* (Optioneel) GPU / GPU-docs / Géorisques: we linken in het rapport; stappen markeren als 'skipped' als we ze niet live ophalen */
-    setStep("gpu", "skipped", "bekijk link in Omgevingsdossier");
-    setStep("gpudoc", "skipped", "bekijk link in Omgevingsdossier");
-    setStep("georisques", "skipped", "bekijk link in Omgevingsdossier");
+  const setStepState = (step, state, metaText = "") => {
+    const li = pipeline.querySelector(`.pipe-step[data-step="${step}"]`);
+    if (!li) return;
+    li.dataset.state = state; // idle | active | done | error
+    const meta = li.querySelector(".pipe-meta");
+    if (meta) meta.textContent = metaText || "";
+  };
 
-    /* Stap 3 — Analyse (Gemini) */
-    setStep("ai", "active");
-    logLine("Genereert AI-analyse…");
+  const euro = (n) =>
+    typeof n === "number" && isFinite(n)
+      ? n.toLocaleString("nl-NL", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })
+      : String(n);
 
-    const signals = {};
-    if (Number.isFinite(input.price)) signals.price = input.price;
-    if (Number.isFinite(input.livingArea)) signals.living_area_m2 = input.livingArea;
+  const cleanAdvertLink = (url) => {
+    try {
+      const u = new URL(url);
+      return `${u.origin}${u.pathname}`;
+    } catch {
+      return url;
+    }
+  };
 
-    if (adText) {
-      const kws = [];
-      const addIf = (re, label) => { if (re.test(adText.toLowerCase())) kws.push(label); };
-      addIf(/double\s+vitrage|dubbel\s+glas/, "double vitrage");
-      addIf(/\b(isolatie|isolation)\b/, "isolatie");
-      addIf(/travaux|renov/i, "travaux à prévoir");
-      signals.advertentie = { keywords: kws };
+  const readNumber = (el) => {
+    if (!el) return null;
+    const v = (el.value || "").replace(",", ".").trim();
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+    // NB: lege string → null
+  };
+
+  const qs = (sel) => document.querySelector(sel);
+
+  // --------- Fetch helpers (with AbortController) ---------
+  const doFetch = async (url, opts = {}, abortController) => {
+    const cfg = { ...opts, signal: abortController?.signal };
+    const r = await fetch(url, cfg);
+    return r;
+  };
+
+  const GET_json = async (url, abortController) => {
+    const r = await doFetch(url, { method: "GET", headers: { accept: "application/json" } }, abortController);
+    if (!r.ok) throw new Error(`HTTP ${r.status} @ ${url}`);
+    return r.json();
+  };
+
+  const POST_json = async (url, body, abortController) => {
+    const r = await doFetch(
+      url,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(body || {}),
+      },
+      abortController
+    );
+    if (!r.ok) {
+      const text = await r.text().catch(() => "");
+      throw new Error(`HTTP ${r.status} @ ${url}: ${text}`);
+    }
+    return r.json();
+  };
+
+  // --------- Render helpers ---------
+  const clearNode = (node) => {
+    while (node && node.firstChild) node.removeChild(node.firstChild);
+  };
+
+  const addFact = (k, vHTML) => {
+    const wrap = document.createElement("div");
+    wrap.className = "fact";
+    const kSpan = document.createElement("span");
+    kSpan.className = "k";
+    kSpan.textContent = k;
+    const vSpan = document.createElement("span");
+    vSpan.className = "v";
+    vSpan.innerHTML = vHTML;
+    wrap.appendChild(kSpan);
+    wrap.appendChild(vSpan);
+    keyfactsBox.appendChild(wrap);
+  };
+
+  const renderList = (ul, arr) => {
+    clearNode(ul);
+    if (!Array.isArray(arr) || arr.length === 0) {
+      const li = document.createElement("li");
+      li.textContent = "—";
+      ul.appendChild(li);
+      return;
+    }
+    arr.forEach((line) => {
+      const li = document.createElement("li");
+      li.textContent = line.replace(/^[-•]\s*/, "");
+      ul.appendChild(li);
+    });
+  };
+
+  const addBadge = (key, label, present) => {
+    const span = document.createElement("span");
+    span.className = "badge";
+    span.textContent = present ? `✅ ${label}` : `— ${label}`;
+    envBadges.appendChild(span);
+  };
+
+  // --------- Contact composer ---------
+  const getSelected = (name) => {
+    const el = document.querySelector(`input[name="${name}"]:checked`);
+    return el ? el.value : null;
+  };
+
+  const composeRoleFromUI = (who) => {
+    // in backend: roles: notary-fr, agent-nl, seller-mixed
+    if (who === "notary") return "notary-fr";
+    if (who === "agent") return "agent-nl";
+    if (who === "seller") return "seller-mixed";
+    return "agent-nl";
+  };
+
+  const composeMessage = async (who, dossierText) => {
+    const role = composeRoleFromUI(who);
+    const payload = { role, dossier: dossierText || "" };
+    const data = await POST_json("/api/compose", payload, currentAbort);
+    if (data?.ok && data?.output?.letter_text) {
+      return data.output.letter_text;
+    }
+    return "—";
+  };
+
+  // --------- Main pipeline ---------
+  const runPipeline = async () => {
+    // Reset UI
+    resultCard.hidden = true;
+    contactCard.hidden = true;
+    composeOut.hidden = true;
+    btnExport.hidden = true;
+
+    resetPipeline();
+    setSpinner(true, "Dossier wordt opgebouwd…");
+    logLine("Dossier wordt opgebouwd…");
+
+    // Build dossier text from form
+    const city = (inputCity.value || "").trim();
+    const postcode = (inputPostcode.value || "").trim();
+    const street = (inputStreet.value || "").trim();
+    const house = (inputHouse.value || "").trim();
+    const advertUrl = (inputAdvert.value || "").trim();
+    const adText = (inputAdText.value || "").trim();
+    const price = readNumber(inputPrice);
+    const areaInput = qs("#area") || { value: "" };
+    const area = readNumber(areaInput);
+
+    if (!city) {
+      setSpinner(false, "Klaar.");
+      logLine("Fout: Plaatsnaam is verplicht.");
+      alert("Plaatsnaam is verplicht.");
+      return;
     }
 
-    const dossierLines = [];
-    dossierLines.push(`${postcode ? postcode + " " : ""}${city}`);
-    if (street || housenr) dossierLines.push([street, housenr].filter(Boolean).join(" "));
-    if (advertLink) dossierLines.push(`Advertentie: ${advertLink}`);
-    if (adText) dossierLines.push(`Excerpt advertentie: ${adText.slice(0, 400)}${adText.length > 400 ? "..." : ""}`);
+    // AbortController per run
+    currentAbort = new AbortController();
 
-    const analyse = await fetchJSON("/api/analyse", {
-      method: "POST",
-      body: JSON.stringify({ dossier: dossierLines.join(" — "), signals }),
-      headers: { "content-type": "application/json" },
-      signal
-    });
+    // Local collect
+    let commune = null;
+    let insee = null;
+    let dvf = null;
 
-    setStep("ai", "done", analyse?.model || "✔");
-    logLine("✔ Analyse gereed");
-
-    /* Stap 4 — Render */
-    setSpinner(false, "Klaar.");
-    btnExport.hidden = false;
-    renderReport({
-      input,
-      commune: commune.commune,
-      dvf,
-      georisques: { summary: [] }, // badges leeg (we verwijzen via links)
-      analysis: analyse
-    });
-  } catch (err) {
-    setSpinner(false, "Fout");
-    setStep("ai", "error");
-    logLine(`Fout: ${err.message || err}`);
-    alert(`Er ging iets mis: ${err.message || err}`);
-  } finally {
-    btnGenerate.disabled = false;
-    btnCancel.hidden = true;
-  }
-};
-
-/* ============== Events ============== */
-document.addEventListener("DOMContentLoaded", () => {
-  // Woonoppervlakte veld toevoegen als het nog niet bestaat (compat met oudere index)
-  if (!$("#living-area")) {
-    const fld = document.createElement("div");
-    fld.className = "field";
-    fld.innerHTML = `
-      <label for="living-area">Woonoppervlakte (m²) <span class="muted">(optioneel)</span></label>
-      <input id="living-area" name="living-area" type="number" inputmode="numeric" placeholder="Bijv: 120" min="1" step="1"/>
-    `;
-    const grid = $(".grid");
-    if (grid) {
-      // plaats na Vraagprijs
-      const priceField = $("#price")?.closest(".field");
-      if (priceField && priceField.nextSibling) grid.insertBefore(fld, priceField.nextSibling);
-      else grid.appendChild(fld);
+    // STEP: commune
+    try {
+      setStepState("commune", "active");
+      logLine("Raadpleegt gemeente…");
+      const url = `/api/commune?city=${encodeURIComponent(city)}${postcode ? `&postcode=${encodeURIComponent(postcode)}` : ""}`;
+      const c = await GET_json(url, currentAbort);
+      if (c?.ok && c?.commune?.insee) {
+        commune = c.commune;
+        insee = commune.insee;
+        setStepState("commune", "done", `${commune.name} (INSEE ${insee})`);
+        logLine("✔ Raadpleegt gemeente…");
+      } else {
+        setStepState("commune", "error", "Geen match");
+        throw new Error("Geen gemeente gevonden");
+      }
+    } catch (e) {
+      logLine("❌ Gemeente-fout: " + (e?.message || e));
+      setSpinner(false, "Klaar.");
+      return;
     }
-  }
 
-  resetPipeline();
+    // STEP: GPU (placeholder → link tonen in resultaat)
+    setStepState("gpu", "done", "bekijk link in Omgevingsdossier");
+    // STEP: GPUDOC (idem)
+    setStepState("gpudoc", "done", "bekijk link in Omgevingsdossier");
 
-  btnGenerate?.addEventListener("click", start);
+    // STEP: DVF
+    try {
+      setStepState("dvf", "active");
+      logLine("Controleert DVF (verkoopprijzen)…");
+      const d = await GET_json(`/api/dvf?insee=${encodeURIComponent(insee)}`, currentAbort);
+      dvf = d;
+      if (d?.ok) {
+        const meta = d.source === "commune"
+          ? "commune-bestand"
+          : `departement-fallback`;
+        setStepState("dvf", "done", meta);
+        logLine("✔ DVF opgehaald");
+      } else {
+        setStepState("dvf", "error", "fout");
+        logLine("⚠ DVF: geen data");
+      }
+    } catch (e) {
+      setStepState("dvf", "error", "fout");
+      logLine("⚠ DVF-fout: " + (e?.message || e));
+    }
 
-  btnCancel?.addEventListener("click", () => {
-    if (aborter) aborter.abort();
-    setSpinner(false, "Afgebroken");
-    logLine("Gebruiker annuleert de huidige run");
-    $$("#progress-pipeline .pipe-step[data-state='active']").forEach(li => li.setAttribute("data-state", "error"));
+    // STEP: Géorisques (we linken straks; geen directe fetch nodig)
+    setStepState("georisques", "done", "bekijk link in Omgevingsdossier");
+
+    // STEP: Analyse (AI)
+    let analyseOut = null;
+    try {
+      setStepState("ai", "active");
+      logLine("Genereert AI-analyse…");
+
+      // signals voor fallback-SWOT
+      const signals = {
+        price: price ?? undefined,
+        area: area ?? undefined,
+        dvf: {
+          source: dvf?.source || null,
+          median_price_m2: dvf?.summary?.median_eur_m2 ?? null
+        },
+        advertentie: {
+          keywords: extractKeywords(adText),
+          towns: [], // geen NER hier
+          near_water: false,
+          truncated: false
+        }
+      };
+
+      const dossierLines = [];
+      dossierLines.push(`Plaats: ${city}${postcode ? " " + postcode : ""}`);
+      if (street || house) dossierLines.push(`Adres (indicatief): ${street} ${house}`.trim());
+      if (price != null) dossierLines.push(`Vraagprijs: ${price}`);
+      if (area != null) dossierLines.push(`Woonoppervlakte: ${area} m²`);
+      if (commune?.name) dossierLines.push(`Commune: ${commune.name} (INSEE ${insee})`);
+      if (dvf?.source) {
+        const med = dvf?.summary?.median_eur_m2;
+        if (med) dossierLines.push(`DVF: mediaan ca. €/${med} m² (bron: DVF)`);
+        else dossierLines.push(`DVF: ${dvf.source}`);
+      }
+      if (advertUrl) dossierLines.push(`Advertentie: ${advertUrl}`);
+      if (adText) dossierLines.push(`Advertentietekst: ${adText.slice(0, 800)}${adText.length > 800 ? "…" : ""}`);
+
+      const payload = {
+        dossier: dossierLines.join("; "),
+        signals
+      };
+
+      const an = await POST_json("/api/analyse", payload, currentAbort);
+      if (an?.ok) {
+        analyseOut = an.output || {};
+        setStepState("ai", "done", an?.model || "AI");
+        logLine("✔ Analyse gereed");
+      } else {
+        setStepState("ai", "error", "AI-fout");
+        logLine("⚠ AI-fout");
+      }
+    } catch (e) {
+      setStepState("ai", "error", "AI-fout");
+      logLine("⚠ Analyse-fout: " + (e?.message || e));
+    }
+
+    // --------- Render resultaat ---------
+    try {
+      // Keyfacts
+      clearNode(keyfactsBox);
+      const inputStr = [
+        postcode ? postcode : null,
+        city || null
+      ].filter(Boolean).join(" ");
+      addFact("Invoer:", inputStr || "—");
+      if (price != null) addFact("Vraagprijs:", `${euro(price)} <span class="muted">(facultatief maar aanbevolen)</span>`);
+      if (area != null) addFact("Woonoppervlakte:", `${area} m²`);
+      addFact("Exact perceel:", "later opvragen bij notaris");
+      if (commune?.name) addFact("Gemeente:", commune.name);
+      if (insee) addFact("INSEE:", insee);
+
+      // DVF status
+      if (dvf?.ok) {
+        const src = dvf.source === "commune" ? "commune-bestand" : `Geen commune-bestand, fallback op departement ${dvf.dep || "?"}.`;
+        const lines = [
+          `DVF status: ${src}`,
+          `<a href="https://app.dvf.etalab.gouv.fr/" target="_blank" rel="noopener">DVF (Etalab)</a>`
+        ];
+        addFact("DVF:", lines.join("<br>"));
+      }
+
+      // Advertentielink schoon tonen
+      if (advertUrl) {
+        const clean = cleanAdvertLink(advertUrl);
+        const html = `<a href="${clean}" target="_blank" rel="noopener">${clean}</a> 
+          <button class="link-mini" data-action="copy-full-link">Kopieer volledige link</button>`;
+        addFact("Advertentielink:", html);
+      }
+
+      // Env badges (placeholder: we hebben geen live risico API hier—links aanbieden)
+      clearNode(envBadges);
+      addBadge("flood", "Overstroming", false);
+      addBadge("coastal", "Kust", false);
+      addBadge("industrial", "Industrieel", false);
+      addBadge("seismic", "Seismisch", false);
+      addBadge("radon", "Radon", false);
+      addBadge("clay", "Klei/krimp", false);
+      addBadge("forestfire", "Bosbrand", false);
+
+      // Env links
+      clearNode(envLinks);
+      if (insee) {
+        envLinks.innerHTML = [
+          `<a href="https://www.geoportail-urbanisme.gouv.fr/recherche?insee=${insee}" target="_blank" rel="noopener">Géoportail Urbanisme</a>`,
+          `<a href="https://www.georisques.gouv.fr/commune/${insee}" target="_blank" rel="noopener">Géorisques – gemeente</a>`,
+          `<a href="https://app.dvf.etalab.gouv.fr/" target="_blank" rel="noopener">DVF – Etalab</a>`
+        ].join("<br>");
+      } else {
+        envLinks.textContent = "—";
+      }
+
+      // Actieplan + SWOT (uit analyse, met fallbacks)
+      const ap = analyseOut?.actieplan || [];
+      renderList(actieplanList, ap);
+
+      const sw = analyseOut?.swot || {};
+      renderList(swotSterke, sw?.sterke_punten || []);
+      renderList(swotZorg, sw?.mogelijke_zorgpunten || []);
+      renderList(swotKansen, sw?.mogelijke_kansen || []);
+      renderList(swotBedreigingen, sw?.mogelijke_bedreigingen || []);
+
+      // Coup-warning optioneel (standaard verbergen)
+      coupWarning.hidden = true;
+
+      // Show sections
+      resultCard.hidden = false;
+      btnExport.hidden = false;
+
+      // Toon contact pas na resultaat (wow-effect)
+      contactCard.hidden = false;
+
+      setSpinner(false, "Klaar.");
+    } catch (e) {
+      logLine("❌ Render-fout: " + (e?.message || e));
+      setSpinner(false, "Klaar.");
+    }
+  };
+
+  const extractKeywords = (txt) => {
+    if (!txt) return [];
+    const lower = txt.toLowerCase();
+    const keys = [];
+    if (lower.includes("travaux")) keys.push("travaux à prévoir");
+    if (lower.includes("isolation")) keys.push("isolation");
+    if (lower.includes("double vitrage")) keys.push("double vitrage");
+    if (lower.includes("pompe à chaleur") || lower.includes("warmtepomp")) keys.push("warmtepomp");
+    return Array.from(new Set(keys));
+  };
+
+  // --------- Events ---------
+  btnGenerate?.addEventListener("click", async () => {
+    // toggle buttons
+    btnGenerate.disabled = true;
+    btnCancel.hidden = false;
+    await runPipeline().catch((e) => {
+      logLine("❌ Alg. fout: " + (e?.message || e));
+    });
     btnGenerate.disabled = false;
     btnCancel.hidden = true;
   });
 
+  btnCancel?.addEventListener("click", () => {
+    if (currentAbort) {
+      currentAbort.abort();
+      logLine("Gebruiker annuleert de huidige run");
+      setSpinner(false, "Klaar.");
+      // zet actieve stappen naar error/stop
+      ["commune", "gpu", "gpudoc", "dvf", "georisques", "ai"].forEach((s) => {
+        const li = pipeline.querySelector(`.pipe-step[data-step="${s}"]`);
+        if (li && li.dataset.state === "active") li.dataset.state = "error";
+      });
+    }
+  });
+
+  // Copy volledige advertentielink (event delegation)
+  document.addEventListener("click", (ev) => {
+    const t = ev.target;
+    if (t && t.matches && t.matches('button[data-action="copy-full-link"]')) {
+      const full = (inputAdvert.value || "").trim();
+      if (!full) return;
+      navigator.clipboard.writeText(full).then(
+        () => {
+          t.textContent = "Gekopieerd";
+          setTimeout(() => (t.textContent = "Kopieer volledige link"), 1500);
+        },
+        () => alert("Kopiëren mislukt")
+      );
+    }
+  });
+
+  // Contact composers
+  const handleCompose = async (who) => {
+    try {
+      composeOut.hidden = false;
+      composeText.textContent = "Bezig met opstellen…";
+
+      // dossiertekst uit keyfacts voor context
+      const facts = Array.from(keyfactsBox.querySelectorAll(".fact")).map((f) => {
+        const k = f.querySelector(".k")?.textContent || "";
+        const v = f.querySelector(".v")?.textContent || "";
+        return `${k} ${v}`.trim();
+      });
+      const dossier = facts.join("; ");
+      const text = await composeMessage(who, dossier);
+      composeText.textContent = text || "—";
+    } catch (e) {
+      composeText.textContent = "Fout bij samenstellen bericht.";
+    }
+  };
+
+  btnComposeNotary?.addEventListener("click", () => handleCompose("notary"));
+  btnComposeAgent?.addEventListener("click", () => handleCompose("agent"));
+  btnComposeSeller?.addEventListener("click", () => handleCompose("seller"));
+
+  // Export (print)
   btnExport?.addEventListener("click", () => {
     window.print();
   });
 
-  // Copy volledige advertentielink
-  document.body.addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-action='copy-full-link']");
-    if (!b) return;
-    const url = b.getAttribute("data-url") || "";
-    if (!url) return;
-    navigator.clipboard.writeText(url).then(() => {
-      b.textContent = "Gekopieerd!";
-      setTimeout(() => (b.textContent = "Kopieer volledige link"), 1200);
-    });
-  });
-});
+  // Init
+  resetPipeline();
+})();
