@@ -525,3 +525,14 @@
   updateComposeButtonsText();
   resetPipeline();
 })();
+async function fetchDVF(insee) {
+  const url = `/api/dvf?insee=${encodeURIComponent(insee)}`;
+  const t0 = performance.now();
+  const r = await fetch(url);
+  const ms = Math.round(performance.now() - t0);
+  if (!r.ok) throw new Error(`DVF HTTP ${r.status}`);
+  const data = await r.json();
+  console.info(`[DVF] ${insee} • ${ms}ms`, data);
+  return data;
+}
+
