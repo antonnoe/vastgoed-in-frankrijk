@@ -1,57 +1,94 @@
-// api/dvf.js
+// api/dvf.js — DVF per commune met fallback naar departement (rural/urban links)
 export const config = { runtime: 'edge' };
 
 const DVF_BASE = 'https://files.data.gouv.fr/geo-dvf/latest';
-const GEO_COMMUNE = 'https://geo.api.gouv.fr/communes';
+const json = (obj, status = 200) =>
+  new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8' }
+  });
 
-const json = (obj, status=200) =>
-  new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json' } });
+// FR overseas (97/98) hebben 3-cijferig dep, anders 2
+const depFromInsee = (insee) => (/^(97|98)/.test(insee) ? insee.slice(0, 3) : insee.slice(0, 2));
 
 export default async function handler(req) {
-  const { searchParams } = new URL(req.url);
-  if (searchParams.get('ping')) return json({ ok: true, pong: true, timestamp: new Date().toISOString() });
+  const sp = new URL(req.url).searchParams;
 
-  const insee = (searchParams.get('insee') || '').trim();
-  if (!insee) return json({ ok:false, error: "Bad Request: 'insee' is verplicht." }, 400);
+  // ping
+  if (sp.get('ping')) {
+    return json({ ok: true, pong: true, timestamp: new Date().toISOString() });
+  }
 
-  // 1) Bestaat per-commune DVF JSON?
-  const communeUrl = `${DVF_BASE}/communes/${insee}.json`;
-  const head = await fetch(communeUrl, { method: 'HEAD' });
-  // 2) Basis commune-meta
-  const metaRes = await fetch(`${GEO_COMMUNE}/${insee}?fields=nom,code,codeDepartement,departement,region,population`);
-  const metaOk = metaRes.ok ? await metaRes.json() : null;
-  const dept = metaOk?.codeDepartement ?? metaOk?.departement?.code ?? null;
+  const insee = (sp.get('insee') || '').trim();
+  if (!insee) return json({ ok: false, error: "Bad Request: 'insee' is verplicht." }, 400);
 
-  const body = {
-    ok: true,
-    insee,
-    commune: {
-      name: metaOk?.nom ?? null,
-      dept,
-      region: metaOk?.region?.nom ?? null,
-      population: typeof metaOk?.population === 'number' ? metaOk.population : null,
-      rural_urban: (typeof metaOk?.population === 'number' && metaOk.population < 2000) ? 'meer landelijk' : 'meer stedelijk'
-    },
-    links: { etalab_app: 'https://app.dvf.etalab.gouv.fr/' },
-    usedEndpoint: null,
-    note: null,
-    meta: { timestamp: new Date().toISOString() }
+  const dep = depFromInsee(insee);
+
+  const links = {
+    etalab_app: 'https://app.dvf.etalab.gouv.fr/',
+    commune_json: `${DVF_BASE}/communes/${insee}.json`,
+    dep_csv_gz: `${DVF_BASE}/csv/${dep}.csv.gz`,
+    dep_parquet: `${DVF_BASE}/parquet/${dep}.parquet`,
+    // handige splitsing voor analyse buiten de tool
+    dep_context: {
+      rural_tip: 'Gebruik INSEE typologie + DVF departement voor rurale vergelijking',
+      urban_tip: 'Gebruik DVF binnen zelfde EPCI/aire urbaine voor stedelijke context'
+    }
   };
 
-  if (head.ok) {
-    body.links.data_gouv_commune_json = communeUrl;
-    body.usedEndpoint = communeUrl;
-    body.note = 'Per-gemeente DVF gevonden.';
-    return json(body);
+  // 1) Probeer per-commune JSON (klein & direct bruikbaar)
+  try {
+    const r = await fetch(links.commune_json, { headers: { accept: 'application/json' } });
+    if (r.ok) {
+      const data = await r.json();
+      const feats = Array.isArray(data?.features) ? data.features : [];
+
+      // eenvoudige mediaan €/m² uit ruwe punten (valeur_fonciere / surface)
+      let median = null;
+      try {
+        const values = feats
+          .map((f) => {
+            const p = f?.properties || {};
+            const v = +p.valeur_fonciere;
+            const s = +(p.surface_reelle_bati || p.surface_terrain);
+            return v > 0 && s > 0 ? v / s : null;
+          })
+          .filter(Number.isFinite)
+          .sort((a, b) => a - b);
+
+        if (values.length) {
+          const m = Math.floor(values.length / 2);
+          median =
+            values.length % 2 ? Math.round(values[m]) : Math.round((values[m - 1] + values[m]) / 2);
+        }
+      } catch {
+        // median blijft null
+      }
+
+      return json({
+        ok: true,
+        source: 'commune',
+        insee,
+        summary: {
+          transactions: feats.length,
+          median_eur_m2: median
+        },
+        links,
+        meta: { timestamp: new Date().toISOString() }
+      });
+    }
+  } catch {
+    // ga door naar fallback
   }
 
-  if (dept) {
-    body.links.data_gouv_dep_csv = `${DVF_BASE}/csv/${dept}.csv.gz`;
-    body.links.data_gouv_dep_parquet = `${DVF_BASE}/parquet/${dept}.parquet`;
-    body.note = 'Geen DVF per gemeente; gebruik departementsbestanden.';
-  } else {
-    body.note = 'Departement onbekend; gebruik DVF viewer en filter op INSEE.';
-  }
-
-  return json(body);
+  // 2) Fallback naar departement (grote bestanden → alleen links + hint)
+  return json({
+    ok: true,
+    source: 'departement-fallback',
+    insee,
+    summary: null,
+    note: 'Geen per-gemeente DVF-JSON gevonden. Gebruik departementsbestanden of de Etalab-app.',
+    links,
+    meta: { timestamp: new Date().toISOString() }
+  });
 }
