@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>IMMODIAGNOSTIQUE – Indicatieve vastgoedanalyse</title>
   <meta name="description" content="Immodiagnostique – hybride dossiergenerator met SWOT, omgevingsdossier en actieplan voor vastgoed in Frankrijk."/>
-  <link rel="stylesheet" href="/style.css?v=ui-showpipe-1"/>
+  <link rel="stylesheet" href="/style.css?v=ui-wire-1"/>
 </head>
 <body>
   <header class="site-header">
@@ -17,7 +17,7 @@
   </header>
 
   <main class="container">
-    <!-- CTA / Invoer ------------------------------->
+    <!-- CTA / Invoer -->
     <section class="card" aria-labelledby="form-title">
       <h2 id="form-title">Voer beschikbare gegevens in</h2>
       <p class="muted">
@@ -42,6 +42,12 @@
             <label for="price">Vraagprijs <span class="muted">(optioneel)</span></label>
             <input id="price" name="price" type="number" inputmode="numeric" placeholder="Bijv: 250000" min="0" step="1000" />
             <div class="help">Facultatief maar aanbevolen</div>
+          </div>
+
+          <!-- NIEUW: woonoppervlakte m² -->
+          <div class="field">
+            <label for="surface">Woonoppervlakte (m²) <span class="muted">(optioneel)</span></label>
+            <input id="surface" name="surface" type="number" inputmode="numeric" placeholder="Bijv: 95" min="1" step="1" />
           </div>
 
           <div class="field">
@@ -78,69 +84,37 @@
       </form>
     </section>
 
-    <!-- Showpiece voortgang / pijplijn ------------------------------->
+    <!-- Voortgang -->
     <section class="card" aria-labelledby="progress-title">
       <h2 id="progress-title">Voortgang</h2>
-
-      <!-- Compact statusregel -->
       <div class="progress-inline">
         <div class="spinner" id="progress-spinner" aria-hidden="true"></div>
         <div class="spinner-label" id="spinner-label" aria-live="polite">Wachten op start…</div>
       </div>
-
-      <!-- Tijdlijn pijplijn: data-state = idle | active | done | error -->
       <ol id="progress-pipeline" class="pipeline" aria-live="polite">
-        <li class="pipe-step" data-step="commune" data-state="idle">
-          <span class="pipe-title">Raadpleegt gemeente</span>
-          <span class="pipe-meta" id="step-commune-meta"></span>
-        </li>
-        <li class="pipe-step" data-step="gpu" data-state="idle">
-          <span class="pipe-title">Raadpleegt GPU (PLU/zonering)</span>
-          <span class="pipe-meta" id="step-gpu-meta"></span>
-        </li>
-        <li class="pipe-step" data-step="gpudoc" data-state="idle">
-          <span class="pipe-title">Haalt GPU-documenten op</span>
-          <span class="pipe-meta" id="step-gpudoc-meta"></span>
-        </li>
-        <li class="pipe-step" data-step="dvf" data-state="idle">
-          <span class="pipe-title">Controleert DVF (verkoopprijzen)</span>
-          <span class="pipe-meta" id="step-dvf-meta"></span>
-        </li>
-        <li class="pipe-step" data-step="georisques" data-state="idle">
-          <span class="pipe-title">Checkt Géorisques (risico’s)</span>
-          <span class="pipe-meta" id="step-georisques-meta"></span>
-        </li>
-        <li class="pipe-step" data-step="ai" data-state="idle">
-          <span class="pipe-title">Analyseert (Gemini)</span>
-          <span class="pipe-meta" id="step-ai-meta"></span>
-        </li>
+        <li class="pipe-step" data-step="commune" data-state="idle"><span class="pipe-title">Raadpleegt gemeente</span><span class="pipe-meta" id="step-commune-meta"></span></li>
+        <li class="pipe-step" data-step="gpu" data-state="idle"><span class="pipe-title">Raadpleegt GPU (PLU/zonering)</span><span class="pipe-meta" id="step-gpu-meta"></span></li>
+        <li class="pipe-step" data-step="gpudoc" data-state="idle"><span class="pipe-title">Haalt GPU-documenten op</span><span class="pipe-meta" id="step-gpudoc-meta"></span></li>
+        <li class="pipe-step" data-step="dvf" data-state="idle"><span class="pipe-title">Controleert DVF (verkoopprijzen)</span><span class="pipe-meta" id="step-dvf-meta"></span></li>
+        <li class="pipe-step" data-step="georisques" data-state="idle"><span class="pipe-title">Checkt Géorisques (risico’s)</span><span class="pipe-meta" id="step-georisques-meta"></span></li>
+        <li class="pipe-step" data-step="ai" data-state="idle"><span class="pipe-title">Analyseert (Gemini)</span><span class="pipe-meta" id="step-ai-meta"></span></li>
       </ol>
-
-      <!-- Verhalende log -->
       <div id="progress-log" class="progress-log" aria-live="polite" aria-atomic="false"></div>
     </section>
 
-    <!-- Resultaatpaneel ------------------------------->
+    <!-- Resultaat -->
     <section id="result" class="card" aria-labelledby="result-title" hidden>
       <h2 id="result-title">Diagnose</h2>
 
       <div class="result-section">
         <h3>1. Vastgoeddossier</h3>
-        <div class="keyfacts" id="keyfacts">
-          <!-- Dynamisch gevuld; toon gekuiste advertentielink (zonder query/hash) -->
-          <!-- Voorbeeld:
-          <div class="fact"><span class="k">Invoer:</span> <span class="v">62170 Montreuil-sur-Mer</span></div>
-          <div class="fact"><span class="k">Vraagprijs:</span> <span class="v">€ 160.500 (facultatief maar aanbevolen)</span></div>
-          <div class="fact"><span class="k">Exact perceel:</span> <span class="v">later opvragen bij notaris</span></div>
-          <div class="fact"><span class="k">Advertentielink:</span> <span class="v"><a href="..." target="_blank" rel="noopener">https://www.seloger.com/annonces/achat/maison/montreuil-62/247894511.htm</a> <button class="link-mini" data-action="copy-full-link">Kopieer volledige link</button></span></div>
-          -->
-        </div>
+        <div class="keyfacts" id="keyfacts"></div>
       </div>
 
       <div class="result-section">
         <h3>2. Omgevingsdossier</h3>
-        <div id="env-badges" class="badge-row"><!-- ✅ / — badges --></div>
-        <div id="env-links" class="env-links"><!-- GPU / Géorisques / DVF links --></div>
+        <div id="env-badges" class="badge-row"></div>
+        <div id="env-links" class="env-links"></div>
       </div>
 
       <div class="result-section">
@@ -151,26 +125,10 @@
       <div class="result-section">
         <h3>Bijlage A: SWOT</h3>
         <div class="swot-grid" id="swot-grid">
-          <div class="swot-cell">
-            <h4>Sterke punten</h4>
-            <ul id="swot-sterke" class="bullet-list"></ul>
-          </div>
-          <div class="swot-cell">
-            <h4>Mogelijke zorgpunten</h4>
-            <ul id="swot-zorg" class="bullet-list"></ul>
-          </div>
-          <div class="swot-cell">
-            <h4>Mogelijke kansen</h4>
-            <ul id="swot-kansen" class="bullet-list"></ul>
-          </div>
-          <div class="swot-cell">
-            <h4>Mogelijke bedreigingen</h4>
-            <ul id="swot-bedreigingen" class="bullet-list"></ul>
-          </div>
-        </div>
-        <div class="warning" id="coup-warning" hidden>
-          <strong>Pas op voor ‘coup de cœur’</strong>: deze term wordt vaak door makelaars gebruikt, maar suggereert een
-          aankoop op basis van emoties, niet van rationele afwegingen.
+          <div class="swot-cell"><h4>Sterke punten</h4><ul id="swot-sterke" class="bullet-list"></ul></div>
+          <div class="swot-cell"><h4>Mogelijke zorgpunten</h4><ul id="swot-zorg" class="bullet-list"></ul></div>
+          <div class="swot-cell"><h4>Mogelijke kansen</h4><ul id="swot-kansen" class="bullet-list"></ul></div>
+          <div class="swot-cell"><h4>Mogelijke bedreigingen</h4><ul id="swot-bedreigingen" class="bullet-list"></ul></div>
         </div>
       </div>
 
@@ -182,7 +140,7 @@
       </div>
     </section>
 
-    <!-- Direct contact (reveal na dossier/PDF) ------------------------------->
+    <!-- Direct contact -->
     <section id="contact" class="card contact-card" aria-labelledby="contact-title" hidden>
       <h2 id="contact-title">Direct contact</h2>
       <p class="muted">Kies per ontvanger het kanaal en de taal. De knoptekst past zich automatisch aan.</p>
@@ -263,6 +221,6 @@
     </div>
   </footer>
 
-  <script src="/script.js?v=ui-showpipe-1" defer></script>
+  <script src="/script.js?v=ui-wire-1" defer></script>
 </body>
 </html>
