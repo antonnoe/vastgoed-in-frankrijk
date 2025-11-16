@@ -1,12 +1,4 @@
-/* public/script.js
- * IMMODIAGNOSTIQUE – frontend pipeline
- * - Commune → INSEE
- * - DVF (commune or departement fallback)
- * - Analyse (/api/analyse) met simpele signals
- * - Resultaat renderen (Vastgoeddossier, Omgeving, Actieplan, SWOT)
- * - Voortgangspijplijn + spinner + annuleren
- */
-
+/* public/script.js — null-safe UI */
 (() => {
   // --------- DOM refs ---------
   const form = document.getElementById("dossier-form");
@@ -21,7 +13,7 @@
   const inputStreet = document.getElementById("street");
   const inputHouse = document.getElementById("housenr");
   const inputAdText = document.getElementById("ad-text");
-  const inputArea = document.getElementById("area"); // kan ontbreken; we lezen via selector
+  const inputAreaEl = document.getElementById("area"); // mag ontbreken
 
   // Progress UI
   const spinner = document.getElementById("progress-spinner");
@@ -40,7 +32,6 @@
   const swotZorg = document.getElementById("swot-zorg");
   const swotKansen = document.getElementById("swot-kansen");
   const swotBedreigingen = document.getElementById("swot-bedreigingen");
-
   const coupWarning = document.getElementById("coup-warning");
 
   // Contact UI
@@ -57,13 +48,11 @@
   // --------- Utils ---------
   const nowHHMMSS = () => {
     const d = new Date();
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    const ss = String(d.getSeconds()).padStart(2, "0");
-    return `${hh}:${mm}:${ss}`;
+    return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
   };
 
   const logLine = (msg) => {
+    if (!logBox) return;
     const p = document.createElement("div");
     p.textContent = `${nowHHMMSS()} · ${msg}`;
     logBox.appendChild(p);
@@ -71,6 +60,7 @@
   };
 
   const setSpinner = (on, label = "") => {
+    if (!spinner || !spinnerLabel) return;
     if (on) {
       spinner.removeAttribute("aria-hidden");
       spinner.style.display = "inline-block";
@@ -83,17 +73,20 @@
   };
 
   const resetPipeline = () => {
-    Array.from(pipeline.querySelectorAll(".pipe-step")).forEach((li) => {
-      li.dataset.state = "idle";
-      const meta = li.querySelector(".pipe-meta");
-      if (meta) meta.textContent = "";
-    });
-    logBox.innerHTML = "";
-    spinnerLabel.textContent = "Wachten op start…";
+    if (pipeline) {
+      Array.from(pipeline.querySelectorAll(".pipe-step")).forEach((li) => {
+        li.dataset.state = "idle";
+        const meta = li.querySelector(".pipe-meta");
+        if (meta) meta.textContent = "";
+      });
+    }
+    if (logBox) logBox.innerHTML = "";
+    if (spinnerLabel) spinnerLabel.textContent = "Wachten op start…";
     setSpinner(false);
   };
 
   const setStepState = (step, state, metaText = "") => {
+    if (!pipeline) return;
     const li = pipeline.querySelector(`.pipe-step[data-step="${step}"]`);
     if (!li) return;
     li.dataset.state = state; // idle | active | done | error
@@ -104,63 +97,27 @@
   const euro = (n) =>
     typeof n === "number" && isFinite(n)
       ? n.toLocaleString("nl-NL", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })
-      : String(n);
+      : String(n ?? "");
 
   const cleanAdvertLink = (url) => {
-    try {
-      const u = new URL(url);
-      return `${u.origin}${u.pathname}`;
-    } catch {
-      return url;
-    }
+    try { const u = new URL(url); return `${u.origin}${u.pathname}`; }
+    catch { return url; }
   };
 
   const readNumber = (el) => {
     if (!el) return null;
-    const v = (el.value || "").replace(",", ".").trim();
+    const v = String(el.value || "").replace(",", ".").trim();
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
-    // NB: lege string → null
   };
 
-  const qs = (sel) => document.querySelector(sel);
-
-  // --------- Fetch helpers (with AbortController) ---------
-  const doFetch = async (url, opts = {}, abortController) => {
-    const cfg = { ...opts, signal: abortController?.signal };
-    const r = await fetch(url, cfg);
-    return r;
-  };
-
-  const GET_json = async (url, abortController) => {
-    const r = await doFetch(url, { method: "GET", headers: { accept: "application/json" } }, abortController);
-    if (!r.ok) throw new Error(`HTTP ${r.status} @ ${url}`);
-    return r.json();
-  };
-
-  const POST_json = async (url, body, abortController) => {
-    const r = await doFetch(
-      url,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify(body || {}),
-      },
-      abortController
-    );
-    if (!r.ok) {
-      const text = await r.text().catch(() => "");
-      throw new Error(`HTTP ${r.status} @ ${url}: ${text}`);
-    }
-    return r.json();
-  };
-
-  // --------- Render helpers ---------
   const clearNode = (node) => {
-    while (node && node.firstChild) node.removeChild(node.firstChild);
+    if (!node) return;
+    while (node.firstChild) node.removeChild(node.firstChild);
   };
 
   const addFact = (k, vHTML) => {
+    if (!keyfactsBox) return;
     const wrap = document.createElement("div");
     wrap.className = "fact";
     const kSpan = document.createElement("span");
@@ -175,6 +132,7 @@
   };
 
   const renderList = (ul, arr) => {
+    if (!ul) return;
     clearNode(ul);
     if (!Array.isArray(arr) || arr.length === 0) {
       const li = document.createElement("li");
@@ -184,81 +142,89 @@
     }
     arr.forEach((line) => {
       const li = document.createElement("li");
-      li.textContent = line.replace(/^[-•]\s*/, "");
+      li.textContent = String(line || "").replace(/^[-•]\s*/, "");
       ul.appendChild(li);
     });
   };
 
-  const addBadge = (key, label, present) => {
+  const addBadge = (label, present) => {
+    if (!envBadges) return;
     const span = document.createElement("span");
     span.className = "badge";
     span.textContent = present ? `✅ ${label}` : `— ${label}`;
     envBadges.appendChild(span);
   };
 
-  // --------- Contact composer ---------
-  const getSelected = (name) => {
-    const el = document.querySelector(`input[name="${name}"]:checked`);
-    return el ? el.value : null;
+  const GET_json = async (url, abortController) => {
+    const r = await fetch(url, { method: "GET", headers: { accept:"application/json" }, signal: abortController?.signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status} @ ${url}`);
+    return r.json();
   };
 
-  const composeRoleFromUI = (who) => {
-    // in backend: roles: notary-fr, agent-nl, seller-mixed
-    if (who === "notary") return "notary-fr";
-    if (who === "agent") return "agent-nl";
-    if (who === "seller") return "seller-mixed";
-    return "agent-nl";
+  const POST_json = async (url, body, abortController) => {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "content-type":"application/json", accept:"application/json" },
+      body: JSON.stringify(body || {}),
+      signal: abortController?.signal
+    });
+    if (!r.ok) {
+      const text = await r.text().catch(()=> "");
+      throw new Error(`HTTP ${r.status} @ ${url}: ${text}`);
+    }
+    return r.json();
+  };
+
+  const extractKeywords = (txt) => {
+    if (!txt) return [];
+    const lower = txt.toLowerCase();
+    const keys = [];
+    if (lower.includes("travaux")) keys.push("travaux à prévoir");
+    if (lower.includes("isolation")) keys.push("isolation");
+    if (lower.includes("double vitrage")) keys.push("double vitrage");
+    if (lower.includes("pompe à chaleur") || lower.includes("warmtepomp")) keys.push("warmtepomp");
+    return Array.from(new Set(keys));
   };
 
   const composeMessage = async (who, dossierText) => {
-    const role = composeRoleFromUI(who);
-    const payload = { role, dossier: dossierText || "" };
-    const data = await POST_json("/api/compose", payload, currentAbort);
-    if (data?.ok && data?.output?.letter_text) {
-      return data.output.letter_text;
-    }
-    return "—";
+    const role = who === "notary" ? "notary-fr" : who === "seller" ? "seller-mixed" : "agent-nl";
+    const data = await POST_json("/api/compose", { role, dossier: dossierText || "" }, currentAbort);
+    return data?.ok && data?.output?.letter_text ? data.output.letter_text : "—";
   };
 
   // --------- Main pipeline ---------
   const runPipeline = async () => {
-    // Reset UI
-    resultCard.hidden = true;
-    contactCard.hidden = true;
-    composeOut.hidden = true;
-    btnExport.hidden = true;
+    // Reset UI (null-safe)
+    if (resultCard) resultCard.hidden = true;
+    if (contactCard) contactCard.hidden = true;
+    if (composeOut) composeOut.hidden = true;
+    if (btnExport) btnExport.hidden = true;
 
     resetPipeline();
     setSpinner(true, "Dossier wordt opgebouwd…");
     logLine("Dossier wordt opgebouwd…");
 
-    // Build dossier text from form
-    const city = (inputCity.value || "").trim();
-    const postcode = (inputPostcode.value || "").trim();
-    const street = (inputStreet.value || "").trim();
-    const house = (inputHouse.value || "").trim();
-    const advertUrl = (inputAdvert.value || "").trim();
-    const adText = (inputAdText.value || "").trim();
+    const city = (inputCity?.value || "").trim();
+    const postcode = (inputPostcode?.value || "").trim();
+    const street = (inputStreet?.value || "").trim();
+    const house = (inputHouse?.value || "").trim();
+    const advertUrl = (inputAdvert?.value || "").trim();
+    const adText = (inputAdText?.value || "").trim();
     const price = readNumber(inputPrice);
-    const areaInput = qs("#area") || { value: "" };
-    const area = readNumber(areaInput);
+    const area = readNumber(inputAreaEl);
 
     if (!city) {
       setSpinner(false, "Klaar.");
       logLine("Fout: Plaatsnaam is verplicht.");
-      alert("Plaatsnaam is verplicht.");
+      if (typeof alert === "function") alert("Plaatsnaam is verplicht.");
       return;
     }
 
-    // AbortController per run
     currentAbort = new AbortController();
 
-    // Local collect
-    let commune = null;
-    let insee = null;
-    let dvf = null;
+    let commune = null, insee = null, dvf = null;
 
-    // STEP: commune
+    // Step: commune
     try {
       setStepState("commune", "active");
       logLine("Raadpleegt gemeente…");
@@ -279,21 +245,17 @@
       return;
     }
 
-    // STEP: GPU (placeholder → link tonen in resultaat)
+    // GPU & GPUDOC placeholders
     setStepState("gpu", "done", "bekijk link in Omgevingsdossier");
-    // STEP: GPUDOC (idem)
     setStepState("gpudoc", "done", "bekijk link in Omgevingsdossier");
 
-    // STEP: DVF
+    // Step: DVF
     try {
       setStepState("dvf", "active");
       logLine("Controleert DVF (verkoopprijzen)…");
-      const d = await GET_json(`/api/dvf?insee=${encodeURIComponent(insee)}`, currentAbort);
-      dvf = d;
-      if (d?.ok) {
-        const meta = d.source === "commune"
-          ? "commune-bestand"
-          : `departement-fallback`;
+      dvf = await GET_json(`/api/dvf?insee=${encodeURIComponent(insee)}`, currentAbort);
+      if (dvf?.ok) {
+        const meta = dvf.source === "commune" ? "commune-bestand" : "departement-fallback";
         setStepState("dvf", "done", meta);
         logLine("✔ DVF opgehaald");
       } else {
@@ -305,16 +267,15 @@
       logLine("⚠ DVF-fout: " + (e?.message || e));
     }
 
-    // STEP: Géorisques (we linken straks; geen directe fetch nodig)
+    // Step: Géorisques (alleen link)
     setStepState("georisques", "done", "bekijk link in Omgevingsdossier");
 
-    // STEP: Analyse (AI)
+    // Step: Analyse
     let analyseOut = null;
     try {
       setStepState("ai", "active");
       logLine("Genereert AI-analyse…");
 
-      // signals voor fallback-SWOT
       const signals = {
         price: price ?? undefined,
         area: area ?? undefined,
@@ -324,7 +285,7 @@
         },
         advertentie: {
           keywords: extractKeywords(adText),
-          towns: [], // geen NER hier
+          towns: [],
           near_water: false,
           truncated: false
         }
@@ -332,24 +293,18 @@
 
       const dossierLines = [];
       dossierLines.push(`Plaats: ${city}${postcode ? " " + postcode : ""}`);
-      if (street || house) dossierLines.push(`Adres (indicatief): ${street} ${house}`.trim());
+      if (street || house) dossierLines.push(`Adres (indicatief): ${(street + " " + house).trim()}`);
       if (price != null) dossierLines.push(`Vraagprijs: ${price}`);
       if (area != null) dossierLines.push(`Woonoppervlakte: ${area} m²`);
       if (commune?.name) dossierLines.push(`Commune: ${commune.name} (INSEE ${insee})`);
       if (dvf?.source) {
         const med = dvf?.summary?.median_eur_m2;
-        if (med) dossierLines.push(`DVF: mediaan ca. €/${med} m² (bron: DVF)`);
-        else dossierLines.push(`DVF: ${dvf.source}`);
+        dossierLines.push(med ? `DVF mediaan ca. €/${med} m²` : `DVF bron: ${dvf.source}`);
       }
       if (advertUrl) dossierLines.push(`Advertentie: ${advertUrl}`);
       if (adText) dossierLines.push(`Advertentietekst: ${adText.slice(0, 800)}${adText.length > 800 ? "…" : ""}`);
 
-      const payload = {
-        dossier: dossierLines.join("; "),
-        signals
-      };
-
-      const an = await POST_json("/api/analyse", payload, currentAbort);
+      const an = await POST_json("/api/analyse", { dossier: dossierLines.join("; "), signals }, currentAbort);
       if (an?.ok) {
         analyseOut = an.output || {};
         setStepState("ai", "done", an?.model || "AI");
@@ -363,80 +318,75 @@
       logLine("⚠ Analyse-fout: " + (e?.message || e));
     }
 
-    // --------- Render resultaat ---------
+    // --------- Render resultaat (null-safe) ---------
     try {
+      if (!resultCard) logLine("⚠ UI: #result ontbreekt");
+      if (!keyfactsBox) logLine("⚠ UI: #keyfacts ontbreekt");
+      if (!envBadges) logLine("⚠ UI: #env-badges ontbreekt");
+      if (!envLinks) logLine("⚠ UI: #env-links ontbreekt");
+      if (!actieplanList) logLine("⚠ UI: #actieplan-list ontbreekt");
+
       // Keyfacts
-      clearNode(keyfactsBox);
-      const inputStr = [
-        postcode ? postcode : null,
-        city || null
-      ].filter(Boolean).join(" ");
-      addFact("Invoer:", inputStr || "—");
-      if (price != null) addFact("Vraagprijs:", `${euro(price)} <span class="muted">(facultatief maar aanbevolen)</span>`);
-      if (area != null) addFact("Woonoppervlakte:", `${area} m²`);
-      addFact("Exact perceel:", "later opvragen bij notaris");
-      if (commune?.name) addFact("Gemeente:", commune.name);
-      if (insee) addFact("INSEE:", insee);
-
-      // DVF status
-      if (dvf?.ok) {
-        const src = dvf.source === "commune" ? "commune-bestand" : `Geen commune-bestand, fallback op departement ${dvf.dep || "?"}.`;
-        const lines = [
-          `DVF status: ${src}`,
-          `<a href="https://app.dvf.etalab.gouv.fr/" target="_blank" rel="noopener">DVF (Etalab)</a>`
-        ];
-        addFact("DVF:", lines.join("<br>"));
+      if (keyfactsBox) {
+        clearNode(keyfactsBox);
+        const inputStr = [postcode || null, city || null].filter(Boolean).join(" ");
+        addFact("Invoer:", inputStr || "—");
+        if (price != null) addFact("Vraagprijs:", `${euro(price)} <span class="muted">(facultatief maar aanbevolen)</span>`);
+        if (area != null) addFact("Woonoppervlakte:", `${area} m²`);
+        addFact("Exact perceel:", "later opvragen bij notaris");
+        if (commune?.name) addFact("Gemeente:", commune.name);
+        if (insee) addFact("INSEE:", insee);
+        if (dvf?.ok) {
+          const src = dvf.source === "commune" ? "commune-bestand" : `Geen commune-bestand, fallback op departement ${dvf.dep || "?"}.`;
+          addFact("DVF:", [
+            `DVF status: ${src}`,
+            `<a href="https://app.dvf.etalab.gouv.fr/" target="_blank" rel="noopener">DVF (Etalab)</a>`
+          ].join("<br>"));
+        }
+        if (advertUrl) {
+          const clean = cleanAdvertLink(advertUrl);
+          const html = `<a href="${clean}" target="_blank" rel="noopener">${clean}</a> 
+            <button class="link-mini" data-action="copy-full-link">Kopieer volledige link</button>`;
+          addFact("Advertentielink:", html);
+        }
       }
 
-      // Advertentielink schoon tonen
-      if (advertUrl) {
-        const clean = cleanAdvertLink(advertUrl);
-        const html = `<a href="${clean}" target="_blank" rel="noopener">${clean}</a> 
-          <button class="link-mini" data-action="copy-full-link">Kopieer volledige link</button>`;
-        addFact("Advertentielink:", html);
+      // Env badges/links
+      if (envBadges) {
+        clearNode(envBadges);
+        addBadge("Overstroming", false);
+        addBadge("Kust", false);
+        addBadge("Industrieel", false);
+        addBadge("Seismisch", false);
+        addBadge("Radon", false);
+        addBadge("Klei/krimp", false);
+        addBadge("Bosbrand", false);
+      }
+      if (envLinks) {
+        clearNode(envLinks);
+        if (insee) {
+          envLinks.innerHTML = [
+            `<a href="https://www.geoportail-urbanisme.gouv.fr/recherche?insee=${insee}" target="_blank" rel="noopener">Géoportail Urbanisme</a>`,
+            `<a href="https://www.georisques.gouv.fr/commune/${insee}" target="_blank" rel="noopener">Géorisques – gemeente</a>`,
+            `<a href="https://app.dvf.etalab.gouv.fr/" target="_blank" rel="noopener">DVF – Etalab</a>`
+          ].join("<br>");
+        } else {
+          envLinks.textContent = "—";
+        }
       }
 
-      // Env badges (placeholder: we hebben geen live risico API hier—links aanbieden)
-      clearNode(envBadges);
-      addBadge("flood", "Overstroming", false);
-      addBadge("coastal", "Kust", false);
-      addBadge("industrial", "Industrieel", false);
-      addBadge("seismic", "Seismisch", false);
-      addBadge("radon", "Radon", false);
-      addBadge("clay", "Klei/krimp", false);
-      addBadge("forestfire", "Bosbrand", false);
+      // Actieplan + SWOT
+      if (actieplanList) renderList(actieplanList, (analyseOut?.actieplan || []));
+      if (swotSterke) renderList(swotSterke, (analyseOut?.swot?.sterke_punten || []));
+      if (swotZorg) renderList(swotZorg, (analyseOut?.swot?.mogelijke_zorgpunten || []));
+      if (swotKansen) renderList(swotKansen, (analyseOut?.swot?.mogelijke_kansen || []));
+      if (swotBedreigingen) renderList(swotBedreigingen, (analyseOut?.swot?.mogelijke_bedreigingen || []));
 
-      // Env links
-      clearNode(envLinks);
-      if (insee) {
-        envLinks.innerHTML = [
-          `<a href="https://www.geoportail-urbanisme.gouv.fr/recherche?insee=${insee}" target="_blank" rel="noopener">Géoportail Urbanisme</a>`,
-          `<a href="https://www.georisques.gouv.fr/commune/${insee}" target="_blank" rel="noopener">Géorisques – gemeente</a>`,
-          `<a href="https://app.dvf.etalab.gouv.fr/" target="_blank" rel="noopener">DVF – Etalab</a>`
-        ].join("<br>");
-      } else {
-        envLinks.textContent = "—";
-      }
+      if (coupWarning) coupWarning.hidden = true;
 
-      // Actieplan + SWOT (uit analyse, met fallbacks)
-      const ap = analyseOut?.actieplan || [];
-      renderList(actieplanList, ap);
-
-      const sw = analyseOut?.swot || {};
-      renderList(swotSterke, sw?.sterke_punten || []);
-      renderList(swotZorg, sw?.mogelijke_zorgpunten || []);
-      renderList(swotKansen, sw?.mogelijke_kansen || []);
-      renderList(swotBedreigingen, sw?.mogelijke_bedreigingen || []);
-
-      // Coup-warning optioneel (standaard verbergen)
-      coupWarning.hidden = true;
-
-      // Show sections
-      resultCard.hidden = false;
-      btnExport.hidden = false;
-
-      // Toon contact pas na resultaat (wow-effect)
-      contactCard.hidden = false;
+      if (resultCard) resultCard.hidden = false;
+      if (btnExport) btnExport.hidden = false;
+      if (contactCard) contactCard.hidden = false;
 
       setSpinner(false, "Klaar.");
     } catch (e) {
@@ -445,27 +395,14 @@
     }
   };
 
-  const extractKeywords = (txt) => {
-    if (!txt) return [];
-    const lower = txt.toLowerCase();
-    const keys = [];
-    if (lower.includes("travaux")) keys.push("travaux à prévoir");
-    if (lower.includes("isolation")) keys.push("isolation");
-    if (lower.includes("double vitrage")) keys.push("double vitrage");
-    if (lower.includes("pompe à chaleur") || lower.includes("warmtepomp")) keys.push("warmtepomp");
-    return Array.from(new Set(keys));
-  };
-
   // --------- Events ---------
   btnGenerate?.addEventListener("click", async () => {
-    // toggle buttons
-    btnGenerate.disabled = true;
-    btnCancel.hidden = false;
-    await runPipeline().catch((e) => {
-      logLine("❌ Alg. fout: " + (e?.message || e));
-    });
-    btnGenerate.disabled = false;
-    btnCancel.hidden = true;
+    if (btnGenerate) btnGenerate.disabled = true;
+    if (btnCancel) btnCancel.hidden = false;
+    try { await runPipeline(); }
+    catch (e) { logLine("❌ Alg. fout: " + (e?.message || e)); }
+    if (btnGenerate) btnGenerate.disabled = false;
+    if (btnCancel) btnCancel.hidden = true;
   });
 
   btnCancel?.addEventListener("click", () => {
@@ -473,47 +410,45 @@
       currentAbort.abort();
       logLine("Gebruiker annuleert de huidige run");
       setSpinner(false, "Klaar.");
-      // zet actieve stappen naar error/stop
-      ["commune", "gpu", "gpudoc", "dvf", "georisques", "ai"].forEach((s) => {
-        const li = pipeline.querySelector(`.pipe-step[data-step="${s}"]`);
-        if (li && li.dataset.state === "active") li.dataset.state = "error";
-      });
+      if (pipeline) {
+        ["commune","gpu","gpudoc","dvf","georisques","ai"].forEach((s) => {
+          const li = pipeline.querySelector(`.pipe-step[data-step="${s}"]`);
+          if (li && li.dataset.state === "active") li.dataset.state = "error";
+        });
+      }
     }
   });
 
-  // Copy volledige advertentielink (event delegation)
   document.addEventListener("click", (ev) => {
     const t = ev.target;
     if (t && t.matches && t.matches('button[data-action="copy-full-link"]')) {
-      const full = (inputAdvert.value || "").trim();
+      const full = (inputAdvert?.value || "").trim();
       if (!full) return;
       navigator.clipboard.writeText(full).then(
-        () => {
-          t.textContent = "Gekopieerd";
-          setTimeout(() => (t.textContent = "Kopieer volledige link"), 1500);
-        },
-        () => alert("Kopiëren mislukt")
+        () => { t.textContent = "Gekopieerd"; setTimeout(() => (t.textContent = "Kopieer volledige link"), 1500); },
+        () => { if (typeof alert === "function") alert("Kopiëren mislukt"); }
       );
     }
   });
 
-  // Contact composers
-  const handleCompose = async (who) => {
-    try {
-      composeOut.hidden = false;
-      composeText.textContent = "Bezig met opstellen…";
+  const collectFactsText = () => {
+    if (!keyfactsBox) return "";
+    return Array.from(keyfactsBox.querySelectorAll(".fact")).map((f) => {
+      const k = f.querySelector(".k")?.textContent || "";
+      const v = f.querySelector(".v")?.textContent || "";
+      return `${k} ${v}`.trim();
+    }).join("; ");
+  };
 
-      // dossiertekst uit keyfacts voor context
-      const facts = Array.from(keyfactsBox.querySelectorAll(".fact")).map((f) => {
-        const k = f.querySelector(".k")?.textContent || "";
-        const v = f.querySelector(".v")?.textContent || "";
-        return `${k} ${v}`.trim();
-      });
-      const dossier = facts.join("; ");
+  const handleCompose = async (who) => {
+    if (composeOut) composeOut.hidden = false;
+    if (composeText) composeText.textContent = "Bezig met opstellen…";
+    try {
+      const dossier = collectFactsText();
       const text = await composeMessage(who, dossier);
-      composeText.textContent = text || "—";
-    } catch (e) {
-      composeText.textContent = "Fout bij samenstellen bericht.";
+      if (composeText) composeText.textContent = text || "—";
+    } catch {
+      if (composeText) composeText.textContent = "Fout bij samenstellen bericht.";
     }
   };
 
@@ -521,10 +456,7 @@
   btnComposeAgent?.addEventListener("click", () => handleCompose("agent"));
   btnComposeSeller?.addEventListener("click", () => handleCompose("seller"));
 
-  // Export (print)
-  btnExport?.addEventListener("click", () => {
-    window.print();
-  });
+  btnExport?.addEventListener("click", () => window.print());
 
   // Init
   resetPipeline();
