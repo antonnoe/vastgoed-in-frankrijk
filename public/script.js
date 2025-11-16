@@ -1,313 +1,359 @@
-/* /public/script.js — UI-flow: voortgang, summary→DVF→analyse, rapport + DVF €/m² */
+/* public/script.js
+ * IMMODIAGNOSTIQUE – UI-logica met voortgangspijplijn, DVF-fallback en rapport-rendering
+ * Vereist: index.html zoals in jouw huidige /public en een werkende /api/commune, /api/dvf, /api/analyse
+ */
 
-(function () {
-  const $ = (sel) => document.querySelector(sel);
+/* ============== Helpers ============== */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  const btnGenerate = $('#btn-generate');
-  const btnCancel = $('#btn-cancel');
-  const btnExport = $('#btn-export');
+const nowHHMMSS = () => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+};
 
-  const spinner = $('#progress-spinner');
-  const spinnerLabel = $('#spinner-label');
-  const pipeline = $('#progress-pipeline');
-  const logBox = $('#progress-log');
+const fetchJSON = async (url, opts) => {
+  const r = await fetch(url, { ...opts, headers: { accept: "application/json", ...(opts && opts.headers) } });
+  const txt = await r.text();
+  let json;
+  try { json = txt ? JSON.parse(txt) : null; } catch { json = { ok: false, error: "Invalid JSON", raw: txt }; }
+  if (!r.ok) {
+    const err = new Error(`HTTP ${r.status} @ ${url}`);
+    err.http = r.status;
+    err.payload = json || txt;
+    throw err;
+  }
+  return json;
+};
 
-  const resultCard = $('#result');
-  const contactCard = $('#contact');
+const fact = (k, v) => `<div class="fact"><span class="k">${k}:</span> <span class="v">${v}</span></div>`;
+const euro = (n) => new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
+const stripUrl = (u) => {
+  try { const x = new URL(u); x.search = ""; x.hash = ""; return x.toString(); } catch { return u; }
+};
 
-  const keyfacts = $('#keyfacts');
-  const envBadges = $('#env-badges');
-  const envLinks = $('#env-links');
-  const actieplanList = $('#actieplan-list');
-  const swSterke = $('#swot-sterke');
-  const swZorg = $('#swot-zorg');
-  const swKansen = $('#swot-kansen');
-  const swBedr = $('#swot-bedreigingen');
+/* ============== Voortgang UI ============== */
+const spinner = $("#progress-spinner");
+const spinnerLabel = $("#spinner-label");
+const pipe = $("#progress-pipeline");
+const logBox = $("#progress-log");
 
-  let aborter = null;
-  const STEP_KEYS = ['commune','gpu','gpudoc','dvf','georisques','ai'];
+const setSpinner = (on, label = "") => {
+  spinner.setAttribute("aria-hidden", on ? "false" : "true");
+  spinner.style.visibility = on ? "visible" : "hidden";
+  spinnerLabel.textContent = label || (on ? "Bezig…" : "Klaar.");
+};
 
-  function resetProgress() {
-    if (spinner) spinner.style.display = 'none';
-    if (spinnerLabel) spinnerLabel.textContent = '';
-    STEP_KEYS.forEach(k => setStepState(k, 'idle', ''));
-    if (logBox) logBox.innerHTML = '';
+const setStep = (name, state, metaText = "") => {
+  const li = pipe.querySelector(`.pipe-step[data-step="${name}"]`);
+  if (!li) return;
+  li.setAttribute("data-state", state); // idle | active | done | error | skipped
+  const meta = li.querySelector(".pipe-meta");
+  if (metaText) meta.textContent = metaText;
+};
+
+const logLine = (msg) => {
+  const p = document.createElement("div");
+  p.textContent = `${nowHHMMSS} · ${msg}`;
+  logBox.appendChild(p);
+  logBox.scrollTop = logBox.scrollHeight;
+};
+
+const resetPipeline = () => {
+  setSpinner(false, "Wachten op start…");
+  $$("#progress-pipeline .pipe-step").forEach((li) => {
+    li.setAttribute("data-state", "idle");
+    const meta = li.querySelector(".pipe-meta");
+    if (meta) meta.textContent = "";
+  });
+  logBox.innerHTML = "";
+  logLine("Wachten op start…");
+};
+
+/* ============== Render ============== */
+const envBadges = (geoSummary) => {
+  // geoSummary: array van {key,label,present:boolean}
+  if (!Array.isArray(geoSummary)) return "";
+  return geoSummary.map(s => {
+    const mark = s.present ? "✅" : "—";
+    return `<span class="badge">${mark} ${s.label}</span>`;
+  }).join("");
+};
+
+const swotList = (ul, items) => {
+  ul.innerHTML = "";
+  if (!Array.isArray(items) || !items.length) {
+    ul.innerHTML = "<li>—</li>";
+    return;
   }
-  function showSpinner(on, label='Dossier wordt opgebouwd…') {
-    if (spinner) spinner.style.display = on ? 'inline-block' : 'none';
-    if (spinnerLabel) spinnerLabel.textContent = on ? label : '';
-  }
-  function setStepState(step, state, metaText) {
-    const li = pipeline?.querySelector(`.pipe-step[data-step="${step}"]`);
-    if (!li) return;
-    li.setAttribute('data-state', state);
-    const meta = li.querySelector('.pipe-meta');
-    if (meta && metaText != null) meta.textContent = metaText;
-  }
-  function logProgress(msg) {
-    if (!logBox) return;
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2,'0');
-    const mm = String(now.getMinutes()).padStart(2,'0');
-    const ss = String(now.getSeconds()).padStart(2,'0');
-    const p = document.createElement('p');
-    p.textContent = `${hh}:${mm}:${ss} · ${msg}`;
-    logBox.appendChild(p);
-    logBox.scrollTop = logBox.scrollHeight;
-  }
-  function cleanAdLink(url) {
-    try { const u = new URL(url); u.search=''; u.hash=''; return u.toString(); } catch { return url || ''; }
-  }
-  function euro(v) {
-    if (v == null || v === '') return '—';
-    const n = Number(v);
-    if (Number.isFinite(n)) return n.toLocaleString('nl-NL',{style:'currency',currency:'EUR',maximumFractionDigits:0});
-    return String(v);
-  }
-  function disableDuringRun(disabled) {
-    if (btnGenerate) btnGenerate.disabled = disabled;
-    if (btnCancel) btnCancel.hidden = !disabled;
-    if (btnExport) btnExport.hidden = true;
-  }
-  function collectInput() {
-    const city = $('#city')?.value?.trim() || '';
-    const postcode = $('#postcode')?.value?.trim() || '';
-    const price = $('#price')?.value?.trim() || '';
-    const surface = $('#surface')?.value?.trim() || '';
-    const advertLink = $('#advert-link')?.value?.trim() || '';
-    const adText = $('#ad-text')?.value?.trim() || '';
-    const street = $('#street')?.value?.trim() || '';
-    const housenr = $('#housenr')?.value?.trim() || '';
-    return { city, postcode, price, surface, advertLink, adText, street, housenr };
+  items.forEach(t => {
+    const li = document.createElement("li");
+    li.textContent = t.replace(/^•\s*/, "");
+    ul.appendChild(li);
+  });
+};
+
+const renderReport = ({ input, commune, dvf, georisques, analysis }) => {
+  const result = $("#result");
+  const keyfacts = $("#keyfacts");
+  const envRow = $("#env-badges");
+  const envLinks = $("#env-links");
+  const actieplanList = $("#actieplan-list");
+
+  // 1) Key facts
+  const facts = [];
+  const placeStr = [input.postcode, input.city].filter(Boolean).join(" ");
+  if (placeStr) facts.push(fact("Invoer", placeStr));
+  if (Number.isFinite(input.price)) facts.push(fact("Vraagprijs", `${euro(input.price)} (facultatief maar aanbevolen)`));
+  if (Number.isFinite(input.livingArea)) facts.push(fact("Woonoppervlakte", `${input.livingArea} m²`));
+  facts.push(fact("Exact perceel", "later opvragen bij notaris"));
+
+  if (commune?.name || commune?.insee) {
+    if (commune?.name) facts.push(fact("Gemeente", commune.name));
+    if (commune?.insee) facts.push(fact("INSEE", commune.insee));
   }
 
-  function fact(k, vHtml) { return `<div class="fact"><span class="k">${k}:</span> <span class="v">${vHtml}</span></div>`; }
-  function linkBox(label, href) { return `<a class="env-link" href="${href}" target="_blank" rel="noopener">${label}</a>`; }
-  function fillList(ul, items) {
-    if (!ul) return;
-    ul.innerHTML = '';
-    const arr = Array.isArray(items) ? items : [];
-    if (!arr.length) { ul.innerHTML = '<li>—</li>'; return; }
-    arr.forEach(x=>{
-      const li = document.createElement('li');
-      li.textContent = String(x).replace(/^•\s*/, '');
-      ul.appendChild(li);
+  // DVF: status + Etalab-link (altijd), en als aanwezig een indicatieve €/m²
+  if (dvf) {
+    const dep = dvf.dep || commune?.department?.code;
+    if (dvf.source === "departement-fallback") {
+      facts.push(fact("DVF status", `Geen commune-bestand, fallback op departement ${dep || "—"}.`));
+    } else if (dvf.source === "commune" && dvf.summary?.median_eur_m2) {
+      facts.push(fact("DVF mediaan", `${euro(dvf.summary.median_eur_m2)}/m² (indicatief)`));
+      if (Number.isFinite(input.price) && Number.isFinite(input.livingArea) && input.livingArea > 0) {
+        const askPerM2 = Math.round(input.price / input.livingArea);
+        facts.push(fact("Vraagprijs per m²", `${euro(askPerM2)}/m² (ruw)`));
+      }
+    }
+    const etalab = dvf?.links?.etalab_app;
+    if (etalab) {
+      facts.push(fact("DVF (Etalab)", `<a href="${etalab}" target="_blank" rel="noopener">${etalab}</a>`));
+    }
+  }
+
+  // Link naar advertentie (gekuist)
+  if (input.advertLink) {
+    const short = stripUrl(input.advertLink);
+    facts.push(
+      fact(
+        "Advertentielink",
+        `<a href="${short}" target="_blank" rel="noopener">${short}</a> 
+         <button class="link-mini" data-action="copy-full-link" data-url="${input.advertLink}">Kopieer volledige link</button>`
+      )
+    );
+  }
+
+  keyfacts.innerHTML = facts.join("");
+
+  // 2) Omgevingsdossier – badges + links
+  envRow.innerHTML = georisques?.summary ? envBadges(georisques.summary) : "";
+  const linksOut = [];
+  if (commune?.insee) {
+    linksOut.push(`<a href="https://www.geoportail-urbanisme.gouv.fr/recherche?insee=${commune.insee}" target="_blank" rel="noopener">Géoportail Urbanisme</a>`);
+    linksOut.push(`<a href="https://www.georisques.gouv.fr/commune/${commune.insee}" target="_blank" rel="noopener">Géorisques – gemeente</a>`);
+  }
+  envLinks.innerHTML = linksOut.join(" · ");
+
+  // 3) Actieplan (uit analyse of fallback)
+  actieplanList.innerHTML = "";
+  const ap = Array.isArray(analysis?.output?.actieplan) ? analysis.output.actieplan :
+    [
+      "ERP (État des Risques et Pollutions) opvragen zodra exact adres bekend is.",
+      "PLU-zonering en SUP controleren via Géoportail Urbanisme.",
+      "Kadastrale referenties en perceelgrenzen bij de notaris bevestigen.",
+      "Recente DVF-transacties in de directe omgeving vergelijken.",
+      "Staat van installaties (elektra/gas/riolering) laten inspecteren.",
+    ];
+  ap.forEach(t => {
+    const li = document.createElement("li");
+    li.textContent = t.replace(/^•\s*/, "");
+    actieplanList.appendChild(li);
+  });
+
+  // 4) SWOT
+  swotList($("#swot-sterke"), analysis?.output?.swot?.sterke_punten);
+  swotList($("#swot-zorg"), analysis?.output?.swot?.mogelijke_zorgpunten);
+  swotList($("#swot-kansen"), analysis?.output?.swot?.mogelijke_kansen);
+  swotList($("#swot-bedreigingen"), analysis?.output?.swot?.mogelijke_bedreigingen);
+
+  // 5) Toon resultaat + contact
+  result.hidden = false;
+  $("#contact").hidden = false;
+};
+
+/* ============== Main flow ============== */
+const btnGenerate = $("#btn-generate");
+const btnCancel = $("#btn-cancel");
+const btnExport = $("#btn-export");
+const form = $("#dossier-form");
+
+let aborter = null;
+
+const start = async () => {
+  // Reset UI
+  $("#result").hidden = true;
+  $("#contact").hidden = true;
+  resetPipeline();
+  setSpinner(true, "Dossier wordt opgebouwd…");
+  btnGenerate.disabled = true;
+  btnCancel.hidden = false;
+  btnExport.hidden = true;
+
+  // Lees invoer
+  const city = $("#city").value.trim();
+  const postcode = $("#postcode").value.trim();
+  const priceVal = $("#price").value.trim();
+  const areaVal = $("#living-area") ? $("#living-area").value.trim() : "";
+  const street = $("#street").value.trim();
+  const housenr = $("#housenr").value.trim();
+  const adText = $("#ad-text").value.trim();
+  const advertLink = $("#advert-link").value.trim();
+
+  if (!city) {
+    setSpinner(false, "Wachten op invoer");
+    logLine("Fout: Plaatsnaam is verplicht.");
+    alert("Plaatsnaam is verplicht.");
+    btnGenerate.disabled = false;
+    btnCancel.hidden = true;
+    return;
+  }
+
+  const input = {
+    city,
+    postcode,
+    price: priceVal ? Number(priceVal) : undefined,
+    livingArea: areaVal ? Number(areaVal) : undefined,
+    street,
+    housenr,
+    advertLink: advertLink || "",
+  };
+
+  aborter = new AbortController();
+  const signal = aborter.signal;
+
+  try {
+    /* Stap 1 — Commune */
+    setStep("commune", "active");
+    logLine("Raadpleegt gemeente…");
+    const qs = new URLSearchParams();
+    qs.set("city", city);
+    if (postcode) qs.set("postcode", postcode);
+    const commune = await fetchJSON(`/api/commune?${qs}`, { signal });
+    if (!commune?.commune?.insee) throw new Error("Geen INSEE gevonden");
+    setStep("commune", "done", "✔");
+    logLine("✔ Raadpleegt gemeente…");
+
+    /* Stap 2 — DVF */
+    setStep("dvf", "active");
+    logLine("Controleert DVF (verkoopprijzen)…");
+    const dvf = await fetchJSON(`/api/dvf?insee=${commune.commune.insee}`, { signal });
+    setStep("dvf", "done", dvf?.source || "✔");
+    logLine("✔ DVF opgehaald");
+
+    /* (Optioneel) GPU / GPU-docs / Géorisques: we linken in het rapport; stappen markeren als 'skipped' als we ze niet live ophalen */
+    setStep("gpu", "skipped", "bekijk link in Omgevingsdossier");
+    setStep("gpudoc", "skipped", "bekijk link in Omgevingsdossier");
+    setStep("georisques", "skipped", "bekijk link in Omgevingsdossier");
+
+    /* Stap 3 — Analyse (Gemini) */
+    setStep("ai", "active");
+    logLine("Genereert AI-analyse…");
+
+    const signals = {};
+    if (Number.isFinite(input.price)) signals.price = input.price;
+    if (Number.isFinite(input.livingArea)) signals.living_area_m2 = input.livingArea;
+
+    if (adText) {
+      const kws = [];
+      const addIf = (re, label) => { if (re.test(adText.toLowerCase())) kws.push(label); };
+      addIf(/double\s+vitrage|dubbel\s+glas/, "double vitrage");
+      addIf(/\b(isolatie|isolation)\b/, "isolatie");
+      addIf(/travaux|renov/i, "travaux à prévoir");
+      signals.advertentie = { keywords: kws };
+    }
+
+    const dossierLines = [];
+    dossierLines.push(`${postcode ? postcode + " " : ""}${city}`);
+    if (street || housenr) dossierLines.push([street, housenr].filter(Boolean).join(" "));
+    if (advertLink) dossierLines.push(`Advertentie: ${advertLink}`);
+    if (adText) dossierLines.push(`Excerpt advertentie: ${adText.slice(0, 400)}${adText.length > 400 ? "..." : ""}`);
+
+    const analyse = await fetchJSON("/api/analyse", {
+      method: "POST",
+      body: JSON.stringify({ dossier: dossierLines.join(" — "), signals }),
+      headers: { "content-type": "application/json" },
+      signal
     });
+
+    setStep("ai", "done", analyse?.model || "✔");
+    logLine("✔ Analyse gereed");
+
+    /* Stap 4 — Render */
+    setSpinner(false, "Klaar.");
+    btnExport.hidden = false;
+    renderReport({
+      input,
+      commune: commune.commune,
+      dvf,
+      georisques: { summary: [] }, // badges leeg (we verwijzen via links)
+      analysis: analyse
+    });
+  } catch (err) {
+    setSpinner(false, "Fout");
+    setStep("ai", "error");
+    logLine(`Fout: ${err.message || err}`);
+    alert(`Er ging iets mis: ${err.message || err}`);
+  } finally {
+    btnGenerate.disabled = false;
+    btnCancel.hidden = true;
   }
+};
 
-  function renderReport({ input, summary, dvf, analysis }) {
-    if (resultCard) resultCard.hidden = false;
-    if (contactCard) contactCard.hidden = false;
-    if (btnExport) btnExport.hidden = false;
-
-    // Keyfacts
-    if (keyfacts) {
-      const facts = [];
-      const invoer = [input.postcode, input.city].filter(Boolean).join(' ');
-      facts.push(fact('Invoer', invoer || '—'));
-      facts.push(fact('Vraagprijs', input.price ? `${euro(input.price)} (facultatief maar aanbevolen)` : '—'));
-      facts.push(fact('Woonoppervlakte', input.surface ? `${Number(input.surface)} m²` : '—'));
-      facts.push(fact('Exact perceel', 'later opvragen bij notaris'));
-
-      if (input.advertLink) {
-        const cleaned = cleanAdLink(input.advertLink);
-        const fullBtn = `<button class="link-mini" data-action="copy-full-link" data-url="${input.advertLink}">Kopieer volledige link</button>`;
-        facts.push(fact('Advertentielink', `<a href="${cleaned}" target="_blank" rel="noopener">${cleaned}</a> ${fullBtn}`));
-      }
-
-      if (summary?.commune?.insee) {
-        facts.push(fact('Gemeente', `${summary.commune.name || '—'}`));
-        facts.push(fact('INSEE', summary.commune.insee));
-        const dep = summary.commune.department;
-        if (dep?.code) facts.push(fact('Departement', `${dep.code}${dep.name?` (${dep.name})`:''}`));
-      }
-
-      // DVF mediaan €/m² + indicatieve waarde + prijs/m² + delta
-      const median = dvf?.summary?.median_eur_m2;
-      const m2 = Number(input.surface);
-      const priceNum = Number(input.price);
-
-      if (Number.isFinite(median)) {
-        facts.push(fact('DVF mediaan', `${median.toLocaleString('nl-NL')} €/m²`));
-      }
-      if (Number.isFinite(median) && Number.isFinite(m2) && m2>0) {
-        const indicative = Math.round(median * m2);
-        facts.push(fact('Indicatieve DVF-waarde', euro(indicative)));
-      }
-      if (Number.isFinite(median) && Number.isFinite(priceNum) && Number.isFinite(m2) && m2>0) {
-        const pricePer = Math.round(priceNum / m2);
-        const deltaPct = Math.round(((pricePer - median) / median) * 100);
-        const deltaLabel = deltaPct === 0 ? 'gelijk aan DVF'
-                         : (deltaPct > 0 ? `+${deltaPct}% boven DVF` : `${deltaPct}% onder DVF`);
-        facts.push(fact('Prijs per m²', `${pricePer.toLocaleString('nl-NL')} €/m² (${deltaLabel})`));
-      }
-
-      keyfacts.innerHTML = facts.join('');
-
-      keyfacts.addEventListener('click', (e) => {
-        const t = e.target;
-        if (t && t.matches && t.matches('[data-action="copy-full-link"]')) {
-          const url = t.getAttribute('data-url') || '';
-          navigator.clipboard?.writeText(url).then(()=>{
-            t.textContent = 'Gekopieerd!';
-            setTimeout(()=>{ t.textContent = 'Kopieer volledige link'; }, 1200);
-          });
-        }
-      });
-    }
-
-    // Badges
-    if (envBadges) {
-      envBadges.innerHTML = '';
-      const s = summary?.georisques?.summary;
-      const items = [
-        { key:'flood', label:'Overstroming' },
-        { key:'coastal', label:'Kust' },
-        { key:'industrial', label:'Industrieel' },
-        { key:'seismic', label:'Seismisch' },
-        { key:'radon', label:'Radon' },
-        { key:'clay', label:'Klei/krimp' },
-        { key:'forestfire', label:'Bosbrand' },
-      ];
-      items.forEach(it => {
-        const present = Array.isArray(s) ? !!s.find(x => x.key === it.key && x.present === true) : false;
-        const badge = document.createElement('span');
-        badge.className = 'badge ' + (present ? 'ok' : 'na');
-        badge.textContent = (present ? '✅ ' : '— ') + it.label;
-        envBadges.appendChild(badge);
-      });
-    }
-
-    // Links
-    if (envLinks) {
-      const links = [];
-      const l1 = summary?.gpu?.links?.gpu_site_commune || summary?.gpudoc?.links?.gpu_recherche;
-      const l2 = summary?.georisques?.links?.commune || summary?.georisques?.links?.search;
-      const l3 = summary?.dvf?.links?.etalab_app;
-      if (l1) links.push(linkBox('Géoportail Urbanisme', l1));
-      if (l2) links.push(linkBox('Géorisques – gemeente', l2));
-      if (l3) links.push(linkBox('DVF – Etalab', l3));
-      envLinks.innerHTML = links.join('');
-    }
-
-    // Actieplan & SWOT
-    fillList(actieplanList, analysis?.actieplan);
-    fillList(swSterke, analysis?.swot?.sterke_punten);
-    fillList(swZorg,   analysis?.swot?.mogelijke_zorgpunten);
-    fillList(swKansen, analysis?.swot?.mogelijke_kansen);
-    fillList(swBedr,   analysis?.swot?.mogelijke_bedreigingen);
-  }
-
-  async function runGenerate() {
-    const input = collectInput();
-    if (!input.city) { alert('Plaatsnaam is verplicht.'); return; }
-
-    resetProgress();
-    disableDuringRun(true);
-    showSpinner(true);
-
-    aborter = new AbortController();
-    const signal = aborter.signal;
-
-    try {
-      // Commune
-      setStepState('commune','active','');
-      logProgress('Raadpleegt gemeente…');
-      const sumRes = await fetch('/api/summary', {
-        method: 'POST',
-        headers: { 'content-type':'application/json' },
-        body: JSON.stringify({ city: input.city, postcode: input.postcode }),
-        signal
-      });
-      if (!sumRes.ok) {
-        const txt = await sumRes.text();
-        setStepState('commune','error',`HTTP ${sumRes.status}`);
-        throw new Error(`/api/summary → ${txt}`);
-      }
-      const summary = await sumRes.json();
-      setStepState('commune','done','✔');
-      logProgress('✔ Raadpleegt gemeente…');
-
-      const hasInsee = !!summary?.commune?.insee;
-      if (!hasInsee) {
-        ['gpu','gpudoc','georisques','dvf'].forEach(s=>setStepState(s,'skip','Geen INSEE'));
-        logProgress('ℹ Geen INSEE: beperkt dossier');
-      }
-
-      // DVF
-      setStepState('dvf','active','');
-      logProgress('Controleert DVF (verkoopprijzen)…');
-      let dvf = null;
-      if (hasInsee) {
-        const dvfRes = await fetch(`/api/dvf?insee=${encodeURIComponent(summary.commune.insee)}`, { signal });
-        if (dvfRes.ok) {
-          dvf = await dvfRes.json();
-          setStepState('dvf','done', dvf?.summary?.median_eur_m2 != null ? `${dvf.summary.median_eur_m2} €/m²` : 'fallback');
-          logProgress('✔ DVF opgehaald');
-        } else {
-          setStepState('dvf','error', `HTTP ${dvfRes.status}`);
-          logProgress('⚠ DVF niet beschikbaar (HTTP '+dvfRes.status+')');
-        }
-      } else {
-        setStepState('dvf','skip','Geen INSEE');
-      }
-
-      // AI
-      setStepState('ai','active','gemini-2.0-flash');
-      logProgress('Genereert AI-analyse…');
-      const dossierPrompt = buildPrompt(input, summary, dvf);
-      const aRes = await fetch('/api/analyse', {
-        method: 'POST',
-        headers: { 'content-type':'application/json' },
-        body: JSON.stringify({ dossier: dossierPrompt }),
-        signal
-      });
-      if (!aRes.ok) {
-        const txt = await aRes.text();
-        setStepState('ai','error', `HTTP ${aRes.status}`);
-        throw new Error(`/api/analyse → ${txt}`);
-      }
-      const analysis = await aRes.json();
-      setStepState('ai','done','✔');
-      logProgress('✔ Analyse gereed');
-
-      renderReport({ input, summary, dvf, analysis: analysis?.output || {} });
-      showSpinner(false);
-      disableDuringRun(false);
-    } catch (err) {
-      if (err?.name === 'AbortError') {
-        logProgress('⏹ Afgebroken op verzoek');
-      } else {
-        logProgress(`⚠ Fout: ${err?.message || err}`);
-      }
-      showSpinner(false);
-      disableDuringRun(false);
-    } finally {
-      aborter = null;
+/* ============== Events ============== */
+document.addEventListener("DOMContentLoaded", () => {
+  // Woonoppervlakte veld toevoegen als het nog niet bestaat (compat met oudere index)
+  if (!$("#living-area")) {
+    const fld = document.createElement("div");
+    fld.className = "field";
+    fld.innerHTML = `
+      <label for="living-area">Woonoppervlakte (m²) <span class="muted">(optioneel)</span></label>
+      <input id="living-area" name="living-area" type="number" inputmode="numeric" placeholder="Bijv: 120" min="1" step="1"/>
+    `;
+    const grid = $(".grid");
+    if (grid) {
+      // plaats na Vraagprijs
+      const priceField = $("#price")?.closest(".field");
+      if (priceField && priceField.nextSibling) grid.insertBefore(fld, priceField.nextSibling);
+      else grid.appendChild(fld);
     }
   }
 
-  function buildPrompt(input, summary, dvf) {
-    const parts = [];
-    parts.push(`Plaats: ${input.city || '—'} ${input.postcode || ''}`.trim());
-    if (summary?.commune?.insee) parts.push(`INSEE: ${summary.commune.insee}`);
-    if (dvf?.summary?.median_eur_m2 != null) parts.push(`DVF mediaan: ${dvf.summary.median_eur_m2} €/m²`);
-    if (input.surface) parts.push(`Woonopp: ${input.surface} m²`);
-    if (input.price) parts.push(`Vraagprijs: ${input.price} EUR`);
-    if (input.adText) parts.push(`Advertentietekst: ${input.adText.slice(0, 800)}`);
-    return parts.join(' | ');
-  }
+  resetPipeline();
 
-  function cancelRun() {
-    if (aborter) { aborter.abort(); aborter = null; }
-  }
-  function doExport() { window.print(); }
+  btnGenerate?.addEventListener("click", start);
 
-  function init() {
-    resetProgress();
-    btnGenerate?.addEventListener('click', runGenerate);
-    btnCancel?.addEventListener('click', cancelRun);
-    btnExport?.addEventListener('click', doExport);
-  }
-  document.addEventListener('DOMContentLoaded', init);
-})();
+  btnCancel?.addEventListener("click", () => {
+    if (aborter) aborter.abort();
+    setSpinner(false, "Afgebroken");
+    logLine("Gebruiker annuleert de huidige run");
+    $$("#progress-pipeline .pipe-step[data-state='active']").forEach(li => li.setAttribute("data-state", "error"));
+    btnGenerate.disabled = false;
+    btnCancel.hidden = true;
+  });
+
+  btnExport?.addEventListener("click", () => {
+    window.print();
+  });
+
+  // Copy volledige advertentielink
+  document.body.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-action='copy-full-link']");
+    if (!b) return;
+    const url = b.getAttribute("data-url") || "";
+    if (!url) return;
+    navigator.clipboard.writeText(url).then(() => {
+      b.textContent = "Gekopieerd!";
+      setTimeout(() => (b.textContent = "Kopieer volledige link"), 1200);
+    });
+  });
+});
