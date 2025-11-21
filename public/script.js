@@ -1,4 +1,4 @@
-// /public/script.js  v: gpu-connected + email-buttons
+// /public/script.js  v: gpu-smart-fallback
 
 (() => {
   // ---------- DOM helpers ----------
@@ -101,15 +101,15 @@
     });
   };
 
-  // NIEUW: Nu met GPU zones (Bestemmingsplan) en Risico's
-  const renderEnv = ({ insee, risks, gpu }) => {
+  const renderEnv = ({ insee, risks, gpu, matchType }) => {
     if (envBadges) {
       let html = '';
       
-      // 1. Géorisques badges
+      // 1. Géorisques badges (Strenger kleurbeleid)
       const mapRisk = (key, label) => {
         const val = risks ? risks[key] : null;
         if (val === true) return `<span class="badge badge-danger">⚠️ ${label}</span>`;
+        // Bij false tonen we het toch, maar groen (zodat je ziet dat het gecheckt is)
         if (val === false) return `<span class="badge badge-success">✓ ${label}</span>`;
         return `<span class="badge">— ${label}</span>`;
       };
@@ -120,13 +120,20 @@
       html += mapRisk('radon', 'Radon');
       html += mapRisk('industrial', 'Industrieel');
 
-      // 2. GPU / Zonering badge (NIEUW)
+      // 2. GPU / Zonering badge
       if (gpu && gpu.length > 0) {
-        // Pak de eerste zone (vaak de belangrijkste)
-        const z = gpu[0];
-        const label = z.code || z.type || 'Zone?';
-        const desc = z.label || '';
-        html += `<span class="badge" style="background:#e3f2fd; color:#0d47a1; border:1px solid #90caf9;">🏗️ PLU: ${label} ${desc ? `(${desc})` : ''}</span>`;
+        const z = gpu[0]; // Pak de eerste (vaak de enige of belangrijkste)
+        const code = z.code || z.type || 'Plan';
+        const label = z.label || '';
+        
+        // Visueel onderscheid: Exact vs Gemeente
+        const badgeStyle = matchType === 'exact' 
+          ? 'background:#e3f2fd; color:#0d47a1; border:1px solid #90caf9;' // Blauw (Exact)
+          : 'background:#fff3e0; color:#e65100; border:1px solid #ffcc80;'; // Oranje (Gemeente-fallback)
+
+        const icon = matchType === 'exact' ? '📍' : '🏙️';
+        
+        html += `<span class="badge" style="${badgeStyle}">${icon} PLU: ${code} ${label ? `(${label})` : ''}</span>`;
       } else {
         html += `<span class="badge">🏗️ PLU: Geen digitaal plan</span>`;
       }
@@ -198,18 +205,12 @@
 
   // ---------- Email Generators (Direct Contact) ----------
   const setupContactButtons = (addressInfo) => {
-    // Zoek alle contact knoppen binnen de #contact sectie
     const container = byId('contact');
     if (!container) return;
 
     const btns = container.querySelectorAll('button');
     btns.forEach(btn => {
-      // Bepaal context uit de DOM structuur (Notaris/Makelaar/Verkoper)
-      const roleBlock = btn.closest('.contact-role');
-      const roleTitle = roleBlock ? roleBlock.querySelector('h4').textContent.trim() : 'Contact';
       const btnText = btn.innerText.toLowerCase();
-
-      // Reset
       btn.onclick = null;
       btn.disabled = false;
 
@@ -223,7 +224,7 @@
           window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         };
       } else if (btnText.includes('telefoon')) {
-        btn.onclick = () => alert('Telefoonnummer niet automatisch gevonden. Raadpleeg de advertentie.');
+        btn.onclick = () => alert('Telefoonnummer niet gevonden. Raadpleeg de advertentie.');
       }
     });
   };
@@ -236,13 +237,11 @@
     setSpinner(true, 'Dossier wordt opgebouwd…');
     addLog('Dossier wordt opgebouwd…');
     
-    // UI toggle
     if(byId('result')) byId('result').hidden = true;
     if(byId('contact')) byId('contact').hidden = true;
     if(btnCancel) btnCancel.hidden = false;
     if(btnExport) btnExport.hidden = true;
 
-    // Inputs
     const city = byId('city')?.value?.trim() || '';
     const postcode = byId('postcode')?.value?.trim() || '';
     const street = byId('street')?.value?.trim() || '';
@@ -278,7 +277,7 @@
       setStep('dvf', 'done', dvfMedian ? 'Mediaan gevonden' : 'Fallback');
       addLog('✔ DVF klaar');
 
-      // 3. Géorisques
+      // 3. Géorisques (Strenge versie wordt aangeroepen door backend)
       setStep('georisques', 'active');
       addLog('Checkt Géorisques…');
       let riskData = {};
@@ -289,18 +288,33 @@
         addLog('✔ Géorisques klaar');
       } catch (e) { setStep('georisques', 'error'); }
 
-      // 4. GPU (NIEUW: Bestemmingsplan)
+      // 4. GPU (Slimme fallback versie)
       setStep('gpu', 'active');
       addLog('Checkt Zonering (GPU)…');
       let gpuData = [];
+      let gpuMatch = 'none';
       try {
-        // We hebben lat/lon nodig. api/commune geeft die meestal terug als .lat/.lon
+        // STUUR LAT/LON ÉN INSEE MEE VOOR FALLBACK
+        let url = `/api/gpu?insee=${com.insee}`;
         if (com.lat && com.lon) {
-           const GPU = await getJSON(`/api/gpu?lat=${com.lat}&lon=${com.lon}`, { signal: aborter.signal });
-           if (GPU?.ok) gpuData = GPU.zones || [];
+           url += `&lat=${com.lat}&lon=${com.lon}`;
         }
-        setStep('gpu', 'done', gpuData.length ? `${gpuData.length} zone(s)` : 'Geen plan');
-        setStep('gpudoc', 'done'); // slaan we over voor visual
+        
+        const GPU = await getJSON(url, { signal: aborter.signal });
+        if (GPU?.ok) {
+            gpuData = GPU.zones || [];
+            gpuMatch = GPU.match || 'none'; // 'exact', 'commune' of 'none'
+        }
+
+        // Logica voor display
+        if (gpuMatch === 'exact') {
+            setStep('gpu', 'done', '📍 Exacte zone');
+        } else if (gpuMatch === 'commune') {
+            setStep('gpu', 'done', '🏙️ Gemeente-plan');
+        } else {
+            setStep('gpu', 'done', 'Geen plan');
+        }
+        setStep('gpudoc', 'done'); 
         addLog('✔ GPU Zonering klaar');
       } catch (e) { setStep('gpu', 'error'); }
 
@@ -310,73 +324,4 @@
       
       const dossierText = `
         Plaats: ${com.name} (${postcode})
-        Adres: ${street} ${housenr}
-        Vraagprijs: ${price || '?'}
-        Oppervlakte: ${surface || '?'}
-        Advertentietekst: ${adText}
-        Link: ${advertLink}
-      `.trim();
-
-      const signals = {
-        price,
-        dvf: { median_price: dvfMedian },
-        georisques: riskData,
-        gpu: gpuData, // stuur zones mee naar AI
-        advertentie: { truncated: adText.length < 50 }
-      };
-
-      const AI = await getJSON('/api/analyse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dossier: dossierText, signals }),
-        signal: aborter.signal
-      });
-
-      if(AI?.ok && AI?.output) {
-         setStep('ai', 'done');
-         addLog('✔ Analyse gereed');
-         
-         const out = AI.output;
-         renderActieplan(out.actieplan);
-         renderSwot(out.swot);
-      } else {
-         throw new Error(AI?.error || 'AI mislukt');
-      }
-
-      // Render Final
-      renderKeyfacts({
-        city, postcode, street, housenr, price, surface,
-        commune: { name: com.name, insee: com.insee, dvf_note: DVF?.source === 'commune' ? 'Gemeente-data' : 'Departement-fallback' }
-      });
-      
-      // Render Env met GPU data!
-      renderEnv({ insee: com.insee, risks: riskData, gpu: gpuData });
-      
-      renderPriceCompare({ price, surface, dvfMedian });
-
-      // Activeer de knoppen
-      setupContactButtons({ city: com.name, postcode: postcode, price: price });
-
-      setSpinner(false, 'Klaar.');
-      if(byId('result')) byId('result').hidden = false;
-      if(byId('contact')) byId('contact').hidden = false;
-      if(btnExport) btnExport.hidden = false;
-      if(btnCancel) btnCancel.hidden = true;
-
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      setSpinner(false, 'Fout.');
-      addLog(`❌ ${err.message}`);
-      setStep('commune', 'error');
-    } finally {
-      aborter = null;
-    }
-  };
-
-  const onCancel = () => { if (aborter) aborter.abort(); setSpinner(false, 'Afgebroken.'); };
-  const onExport = () => window.print();
-
-  if (btnGenerate) btnGenerate.addEventListener('click', onGenerate);
-  if (btnCancel) btnCancel.addEventListener('click', onCancel);
-  if (btnExport) btnExport.addEventListener('click', onExport);
-})();
+        Adres: ${street} ${hous
