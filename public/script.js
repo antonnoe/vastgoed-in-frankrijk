@@ -1,4 +1,4 @@
-// /public/script.js  v: final-fix
+// /public/script.js  v: georisques-fix
 
 (() => {
   // ---------- DOM helpers ----------
@@ -72,12 +72,15 @@
     const r = await fetch(url, init);
     const ct = r.headers.get('content-type') || '';
     if (!r.ok) {
+      // Probeer de foutmelding te lezen, maar faal niet hard als het HTML is
       const text = await r.text().catch(()=>'');
-      throw new Error(`HTTP ${r.status} @ ${url} – ${text || 'no body'}`);
+      // Als het een 404 is op een optionele API, return null (handled in logic)
+      if (r.status === 404) return null; 
+      throw new Error(`HTTP ${r.status} @ ${url}`);
     }
     if (!ct.includes('application/json')) {
-      const text = await r.text();
-      try { return JSON.parse(text); } catch { throw new Error(`Non-JSON @ ${url}`); }
+      // Soms stuurt Vercel HTML bij errors
+      return null;
     }
     return r.json();
   };
@@ -115,12 +118,37 @@
     }
   };
 
-  const renderEnv = ({ insee, lat, lon }) => {
+  // NIEUW: Badges worden nu dynamisch gekleurd
+  const renderEnv = ({ insee, risks }) => {
     if (envBadges) {
-      envBadges.innerHTML = [
-        'Overstroming', 'Kust', 'Industrieel', 'Seismisch', 'Radon', 'Klei/krimp', 'Bosbrand'
-      ].map(lbl => `<span class="badge">— ${lbl}</span>`).join('');
+      // Default lijstje, we checken 'risks' object om te zien of ze true/false zijn
+      // Verwacht risks structuur: { flood: true, seismic: false, ... } of vergelijkbaar
+      
+      const mapRisk = (key, label) => {
+        const val = risks ? risks[key] : null; 
+        let className = 'badge';
+        let icon = '—';
+        
+        if (val === true || val === 'high') {
+          className += ' badge-danger'; // Rood
+          icon = '⚠️';
+        } else if (val === false || val === 'low') {
+          className += ' badge-success'; // Groen (optioneel)
+          icon = '✓';
+        }
+        return `<span class="${className}">${icon} ${label}</span>`;
+      };
+
+      // Mappings op basis van wat api/georisques.js waarschijnlijk teruggeeft
+      envBadges.innerHTML = `
+        ${mapRisk('flood', 'Overstroming')}
+        ${mapRisk('argile', 'Klei/krimp')}
+        ${mapRisk('seismic', 'Seismisch')}
+        ${mapRisk('radon', 'Radon')}
+        ${mapRisk('industrial', 'Industrieel')}
+      `;
     }
+
     if (envLinks) {
       const gpul = insee ? `https://www.geoportail-urbanisme.gouv.fr/recherche?insee=${insee}` : null;
       const grl  = insee ? `https://www.georisques.gouv.fr/commune/${insee}` : null;
@@ -144,7 +172,6 @@
     });
   };
 
-  // NIEUW: Render SWOT
   const renderSwot = (swot) => {
     const fill = (id, items) => {
       const ul = byId(id);
@@ -215,8 +242,6 @@
 
   // ---------- Main flow ----------
   let aborter = null;
-  // Opslag voor contact-data
-  let currentComm = null;
 
   const onGenerate = async () => {
     resetPipeline();
@@ -252,6 +277,7 @@
       const q = new URLSearchParams();
       q.set('city', city);
       if (postcode) q.set('postcode', postcode);
+      
       const C = await getJSON(`/api/commune?${q.toString()}`, { signal: aborter.signal });
       if (!C?.ok || !C?.commune?.insee) throw new Error('Geen INSEE gevonden');
       const com = C.commune;
@@ -275,11 +301,29 @@
       }
       addLog('✔ DVF opgehaald');
 
+      // Step 3: Géorisques (NU TOEGEVOEGD!)
+      setStep('georisques', 'active');
+      addLog('Checkt Géorisques (risico’s)…');
+      let riskData = {};
+      try {
+        const GR = await getJSON(`/api/georisques?insee=${encodeURIComponent(com.insee)}`, { signal: aborter.signal });
+        if (GR && GR.ok) {
+            riskData = GR.data || {};
+            setStep('georisques', 'done', 'Data opgehaald');
+            addLog('✔ Risico-data ontvangen');
+        } else {
+            setStep('georisques', 'done', 'Geen details');
+            addLog('⚠ Geen Géorisques data');
+        }
+      } catch (e) {
+        setStep('georisques', 'error');
+        addLog('⚠ Fout bij Géorisques');
+      }
+
       setStep('gpu', 'done', 'bekijk link in Omgevingsdossier');
       setStep('gpudoc', 'done', 'bekijk link in Omgevingsdossier');
-      setStep('georisques', 'done', 'bekijk link in Omgevingsdossier');
 
-      // Step 3: AI
+      // Step 4: AI
       setStep('ai', 'active', 'gemini-2.0-flash');
       addLog('Genereert AI-analyse (dit duurt even)…');
       
@@ -295,6 +339,8 @@
       const signals = {
         price: price,
         dvf: { median_price: dvfMedian },
+        // Hier sturen we nu de echte risico-data mee naar Gemini:
+        georisques: riskData, 
         advertentie: {
           keywords: [],
           truncated: adText.length < 50
@@ -314,9 +360,7 @@
          
          const out = AI.output;
          renderActieplan(out.actieplan);
-         renderSwot(out.swot); // <--- NU AAN
-         currentComm = out.communicatie; // Opslaan voor contact-sectie
-
+         renderSwot(out.swot);
       } else {
          throw new Error(AI?.error || 'AI analyse mislukt');
       }
@@ -331,7 +375,10 @@
           dvf_note: DVF?.source === 'commune' ? 'DVF status: gemeente-mediaan beschikbaar.' : `DVF status: fallback op departement.`
         }
       });
-      renderEnv({ insee: com.insee, lat: com.lat, lon: com.lon });
+      
+      // Geef de riskData mee aan renderEnv voor de kleurtjes
+      renderEnv({ insee: com.insee, lat: com.lat, lon: com.lon, risks: riskData });
+      
       renderPriceCompare({
         price: Number.isFinite(price) ? price : NaN,
         surface: Number.isFinite(surface) ? surface : NaN,
