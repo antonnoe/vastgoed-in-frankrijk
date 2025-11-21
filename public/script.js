@@ -1,4 +1,4 @@
-// /public/script.js  v: pricecmp-2 (AI wired up)
+// /public/script.js  v: final-fix
 
 (() => {
   // ---------- DOM helpers ----------
@@ -18,14 +18,11 @@
   const resultCard = byId('result');
   const contactCard = byId('contact');
 
-  // Resultaat boxen (zorg dat deze ID's in je HTML bestaan!)
+  // Resultaat boxen
   const keyfactsBox = byId('keyfacts');
   const envBadges = byId('env-badges');
   const envLinks = byId('env-links');
   const actieplanList = byId('actieplan-list');
-  const swotList = byId('swot-list'); // <--- Nieuw nodig in HTML
-  const aiRawBox = byId('ai-raw-text'); // <--- Optioneel voor raw text
-
   const priceCmpBox = byId('price-compare');
 
   // ---------- UI: pipeline & log ----------
@@ -45,7 +42,7 @@
   const setStep = (step, state, meta = '') => {
     const li = pipeline ? pipeline.querySelector(`.pipe-step[data-step="${step}"]`) : null;
     if (!li) return;
-    li.setAttribute('data-state', state); // idle|active|done|error
+    li.setAttribute('data-state', state);
     const metaEl = byId(`step-${step}-meta`);
     if (metaEl) metaEl.textContent = meta;
   };
@@ -120,7 +117,6 @@
 
   const renderEnv = ({ insee, lat, lon }) => {
     if (envBadges) {
-      // Placeholder badges (niet interactief, puur indicatie)
       envBadges.innerHTML = [
         'Overstroming', 'Kust', 'Industrieel', 'Seismisch', 'Radon', 'Klei/krimp', 'Bosbrand'
       ].map(lbl => `<span class="badge">— ${lbl}</span>`).join('');
@@ -137,16 +133,10 @@
     }
   };
 
-  // Render Actieplan (nu gevoed door AI)
   const renderActieplan = (planItems) => {
     if (!actieplanList) return;
     actieplanList.innerHTML = '';
-    
-    // Fallback als AI leeg is
-    const items = (planItems && planItems.length > 0) 
-      ? planItems 
-      : ['Geen actiepunten gegenereerd door AI.'];
-
+    const items = (planItems && planItems.length > 0) ? planItems : ['Geen actiepunten gegenereerd.'];
     items.forEach(txt => {
       const li = document.createElement('li');
       li.textContent = txt;
@@ -154,16 +144,39 @@
     });
   };
 
+  // NIEUW: Render SWOT
+  const renderSwot = (swot) => {
+    const fill = (id, items) => {
+      const ul = byId(id);
+      if (!ul) return;
+      ul.innerHTML = '';
+      if (!items || items.length === 0) {
+        ul.innerHTML = '<li><i>Geen punten gevonden</i></li>';
+        return;
+      }
+      items.forEach(txt => {
+        const li = document.createElement('li');
+        li.textContent = txt;
+        ul.appendChild(li);
+      });
+    };
+    
+    if (swot) {
+      fill('list-sterke-punten', swot.sterke_punten);
+      fill('list-mogelijke-zorgpunten', swot.mogelijke_zorgpunten);
+      fill('list-mogelijke-kansen', swot.mogelijke_kansen);
+      fill('list-mogelijke-bedreigingen', swot.mogelijke_bedreigingen);
+    }
+  };
+
   const renderPriceCompare = ({ price, surface, dvfMedian }) => {
     if (!priceCmpBox) return;
     priceCmpBox.innerHTML = '';
-
     if (!Number.isFinite(price) || !Number.isFinite(surface) || surface <= 0) {
       const note = document.createElement('div');
       note.className = 'pc-row pc-note';
       note.textContent = 'Vul vraagprijs én woonoppervlakte in om m²-vergelijking te tonen.';
       priceCmpBox.appendChild(note);
-      // Toon DVF link/mededeling indien aanwezig
       if (Number.isFinite(dvfMedian)) {
         const row = document.createElement('div');
         row.className = 'pc-row';
@@ -172,7 +185,6 @@
       }
       return;
     }
-
     const askPerM2 = Math.round(price / surface);
     const r1 = document.createElement('div');
     r1.className = 'pc-row';
@@ -184,7 +196,6 @@
       r2.className = 'pc-row';
       r2.innerHTML = `<span class="k">DVF mediaan (gemeente):</span> <span class="v">${euro(dvfMedian)}/m²</span>`;
       priceCmpBox.appendChild(r2);
-
       const deltaPct = ((askPerM2 - dvfMedian) / dvfMedian) * 100;
       const r3 = document.createElement('div');
       r3.className = 'pc-row';
@@ -194,7 +205,7 @@
     } else {
       const r2 = document.createElement('div');
       r2.className = 'pc-row pc-note';
-      r2.textContent = 'Geen DVF-mediaan op gemeenteniveau; gebruik departementsbestanden of Etalab-app.';
+      r2.textContent = 'Geen DVF-mediaan op gemeenteniveau; gebruik departementsbestanden.';
       priceCmpBox.appendChild(r2);
     }
   };
@@ -204,9 +215,10 @@
 
   // ---------- Main flow ----------
   let aborter = null;
+  // Opslag voor contact-data
+  let currentComm = null;
 
   const onGenerate = async () => {
-    // Reset UI
     resetPipeline();
     setSpinner(true, 'Dossier wordt opgebouwd…');
     addLog('Dossier wordt opgebouwd…');
@@ -216,7 +228,6 @@
     hide(contactCard);
     hide(resultCard);
 
-    // Read form
     const city = byId('city')?.value?.trim() || '';
     const postcode = byId('postcode')?.value?.trim() || '';
     const street = byId('street')?.value?.trim() || '';
@@ -234,8 +245,8 @@
 
     aborter = new AbortController();
 
-    // Step 1 — commune
     try {
+      // Step 1: Commune
       setStep('commune', 'active');
       addLog('Raadpleegt gemeente…');
       const q = new URLSearchParams();
@@ -247,7 +258,7 @@
       setStep('commune', 'done', `${com.name} (INSEE ${com.insee})`);
       addLog('✔ Raadpleegt gemeente…');
 
-      // Step 2 — DVF
+      // Step 2: DVF
       setStep('dvf', 'active');
       addLog('Controleert DVF (verkoopprijzen)…');
       const DVF = await getJSON(`/api/dvf?insee=${encodeURIComponent(com.insee)}`, { signal: aborter.signal });
@@ -264,25 +275,20 @@
       }
       addLog('✔ DVF opgehaald');
 
-      // (optioneel) GPU/Georisques: markeer als “bekijk link in Omgevingsdossier”
       setStep('gpu', 'done', 'bekijk link in Omgevingsdossier');
       setStep('gpudoc', 'done', 'bekijk link in Omgevingsdossier');
       setStep('georisques', 'done', 'bekijk link in Omgevingsdossier');
 
-      // Step 3 — AI (De echte aanroep)
+      // Step 3: AI
       setStep('ai', 'active', 'gemini-2.0-flash');
       addLog('Genereert AI-analyse (dit duurt even)…');
       
-      // Bouw de payload voor de AI
       const dossierText = `
         Plaats: ${com.name} (${postcode})
         Adres: ${street} ${housenr}
         Vraagprijs: ${price || '?'}
         Oppervlakte: ${surface || '?'}
-        
-        Advertentietekst:
-        ${adText}
-        
+        Advertentietekst: ${adText}
         Link: ${advertLink}
       `.trim();
 
@@ -290,7 +296,7 @@
         price: price,
         dvf: { median_price: dvfMedian },
         advertentie: {
-          keywords: [], // evt. vullen met logica
+          keywords: [],
           truncated: adText.length < 50
         }
       };
@@ -306,28 +312,23 @@
          setStep('ai', 'done');
          addLog('✔ Analyse gereed');
          
-         // Gebruik de AI resultaten
          const out = AI.output;
          renderActieplan(out.actieplan);
-         
-         // Hier kun je later SWOT ook renderen als je swotList in HTML hebt
-         // renderSwot(out.swot); 
+         renderSwot(out.swot); // <--- NU AAN
+         currentComm = out.communicatie; // Opslaan voor contact-sectie
 
       } else {
          throw new Error(AI?.error || 'AI analyse mislukt');
       }
 
-
-      // Render resultaat (Keyfacts & Price blijven hetzelfde)
+      // Render Results
       renderKeyfacts({
         city, postcode, street, housenr,
         price: Number.isFinite(price) ? price : undefined,
         surface: Number.isFinite(surface) ? surface : undefined,
         commune: {
           name: com.name, insee: com.insee,
-          dvf_note: DVF?.source === 'commune'
-            ? 'DVF status: gemeente-mediaan beschikbaar.'
-            : `DVF status: Geen commune-bestand, fallback op departement ${DVF?.dep || ''}.`
+          dvf_note: DVF?.source === 'commune' ? 'DVF status: gemeente-mediaan beschikbaar.' : `DVF status: fallback op departement.`
         }
       });
       renderEnv({ insee: com.insee, lat: com.lat, lon: com.lon });
@@ -342,10 +343,10 @@
       reveal(contactCard);
       reveal(btnExport);
     } catch (err) {
-      if (err.name === 'AbortError') return; // User cancel
+      if (err.name === 'AbortError') return;
       setSpinner(false, 'Fout.');
       addLog(`❌ ${err.message || err}`);
-      setStep('commune', 'error'); // of de huidige stap
+      setStep('commune', 'error');
     } finally {
       aborter = null;
     }
@@ -357,10 +358,7 @@
     addLog('⏹ Afgebroken.');
     aborter = null;
   };
-
-  const onExport = () => {
-    window.print();
-  };
+  const onExport = () => window.print();
 
   // ---------- Wire up ----------
   if (btnGenerate) btnGenerate.addEventListener('click', onGenerate);
