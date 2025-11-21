@@ -1,4 +1,4 @@
-// /public/script.js  v: pricecmp-1
+// /public/script.js  v: pricecmp-2 (AI wired up)
 
 (() => {
   // ---------- DOM helpers ----------
@@ -18,10 +18,13 @@
   const resultCard = byId('result');
   const contactCard = byId('contact');
 
+  // Resultaat boxen (zorg dat deze ID's in je HTML bestaan!)
   const keyfactsBox = byId('keyfacts');
   const envBadges = byId('env-badges');
   const envLinks = byId('env-links');
   const actieplanList = byId('actieplan-list');
+  const swotList = byId('swot-list'); // <--- Nieuw nodig in HTML
+  const aiRawBox = byId('ai-raw-text'); // <--- Optioneel voor raw text
 
   const priceCmpBox = byId('price-compare');
 
@@ -134,16 +137,17 @@
     }
   };
 
-  const renderActieplan = () => {
+  // Render Actieplan (nu gevoed door AI)
+  const renderActieplan = (planItems) => {
     if (!actieplanList) return;
     actieplanList.innerHTML = '';
-    [
-      'ERP (État des Risques et Pollutions) opvragen zodra exact adres bekend is.',
-      'PLU-zonering en SUP controleren via Géoportail Urbanisme.',
-      'Kadastrale referenties en perceelgrenzen bij de notaris bevestigen.',
-      'Recente DVF-transacties in de directe omgeving vergelijken.',
-      'Staat van installaties (elektra/gas/riolering) laten inspecteren.'
-    ].forEach(txt => {
+    
+    // Fallback als AI leeg is
+    const items = (planItems && planItems.length > 0) 
+      ? planItems 
+      : ['Geen actiepunten gegenereerd door AI.'];
+
+    items.forEach(txt => {
       const li = document.createElement('li');
       li.textContent = txt;
       actieplanList.appendChild(li);
@@ -265,15 +269,56 @@
       setStep('gpudoc', 'done', 'bekijk link in Omgevingsdossier');
       setStep('georisques', 'done', 'bekijk link in Omgevingsdossier');
 
-      // Step 3 — AI (placeholder, we tonen alleen “gereed”)
+      // Step 3 — AI (De echte aanroep)
       setStep('ai', 'active', 'gemini-2.0-flash');
-      addLog('Genereert AI-analyse…');
-      // (Hier zou /api/analyse aangeroepen worden; we “simuleren” alleen status)
-      await new Promise(r => setTimeout(r, 500));
-      setStep('ai', 'done');
-      addLog('✔ Analyse gereed');
+      addLog('Genereert AI-analyse (dit duurt even)…');
+      
+      // Bouw de payload voor de AI
+      const dossierText = `
+        Plaats: ${com.name} (${postcode})
+        Adres: ${street} ${housenr}
+        Vraagprijs: ${price || '?'}
+        Oppervlakte: ${surface || '?'}
+        
+        Advertentietekst:
+        ${adText}
+        
+        Link: ${advertLink}
+      `.trim();
 
-      // Render resultaat
+      const signals = {
+        price: price,
+        dvf: { median_price: dvfMedian },
+        advertentie: {
+          keywords: [], // evt. vullen met logica
+          truncated: adText.length < 50
+        }
+      };
+
+      const AI = await getJSON('/api/analyse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dossier: dossierText, signals: signals }),
+        signal: aborter.signal
+      });
+
+      if(AI?.ok && AI?.output) {
+         setStep('ai', 'done');
+         addLog('✔ Analyse gereed');
+         
+         // Gebruik de AI resultaten
+         const out = AI.output;
+         renderActieplan(out.actieplan);
+         
+         // Hier kun je later SWOT ook renderen als je swotList in HTML hebt
+         // renderSwot(out.swot); 
+
+      } else {
+         throw new Error(AI?.error || 'AI analyse mislukt');
+      }
+
+
+      // Render resultaat (Keyfacts & Price blijven hetzelfde)
       renderKeyfacts({
         city, postcode, street, housenr,
         price: Number.isFinite(price) ? price : undefined,
@@ -286,7 +331,6 @@
         }
       });
       renderEnv({ insee: com.insee, lat: com.lat, lon: com.lon });
-      renderActieplan();
       renderPriceCompare({
         price: Number.isFinite(price) ? price : NaN,
         surface: Number.isFinite(surface) ? surface : NaN,
@@ -298,9 +342,10 @@
       reveal(contactCard);
       reveal(btnExport);
     } catch (err) {
+      if (err.name === 'AbortError') return; // User cancel
       setSpinner(false, 'Fout.');
       addLog(`❌ ${err.message || err}`);
-      setStep('commune', 'error');
+      setStep('commune', 'error'); // of de huidige stap
     } finally {
       aborter = null;
     }
@@ -314,7 +359,6 @@
   };
 
   const onExport = () => {
-    // Heel basale print/export (browser print)
     window.print();
   };
 
