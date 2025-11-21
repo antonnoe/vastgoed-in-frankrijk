@@ -1,51 +1,68 @@
-// /api/gpu.js
-// Haalt de exacte bestemmingszone op voor een specifiek punt (lat/lon)
-// Bron: IGN Apicarto GPU
-
+// /api/gpu.js - V3: Smart Fallback
 export default async function handler(req, res) {
-  const { lat, lon } = req.query;
+  const { lat, lon, insee } = req.query; // We accepteren nu ook INSEE als fallback
 
-  // Check of we coördinaten hebben
-  if (!lat || !lon) {
-    return res.status(400).json({ ok: false, error: 'Coördinaten (lat/lon) ontbreken' });
+  // 1. Probeer eerst exact op coördinaten (Lat/Lon)
+  if (lat && lon) {
+    const zones = await fetchGpuByPoint(lat, lon);
+    if (zones && zones.length > 0) {
+      return res.status(200).json({ ok: true, match: 'exact', zones });
+    }
   }
 
-  try {
-    // IGN verwacht GeoJSON formaat: [lengtegraad, breedtegraad]
-    const geom = JSON.stringify({
-      type: "Point",
-      coordinates: [parseFloat(lon), parseFloat(lat)]
-    });
-
-    const url = `https://apicarto.ign.fr/api/gpu/zone-urba?geom=${encodeURIComponent(geom)}`;
-    
-    // Timeout instellen (IGN is soms traag)
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      // 404 betekent: Geen digitaal plan beschikbaar op deze plek
-      return res.status(200).json({ ok: true, zones: [] });
+  // 2. Geen exacte treffer? Probeer op basis van gemeente (INSEE)
+  // Dit toont of de gemeente überhaupt een digitaal plan heeft.
+  if (insee) {
+    const zones = await fetchGpuByPartition(insee);
+    if (zones && zones.length > 0) {
+      // We geven een algemene melding terug
+      return res.status(200).json({ 
+        ok: true, 
+        match: 'commune', 
+        zones: [{ code: 'PLU', label: 'Digitaal plan beschikbaar voor gemeente' }] 
+      });
     }
+  }
 
-    const json = await response.json();
-    const features = json.features || [];
+  // 3. Echt niets gevonden
+  return res.status(200).json({ ok: true, match: 'none', zones: [] });
+}
 
-    // Map de data naar een leesbaar formaat voor de frontend
-    const zones = features.map(f => ({
-      type: f.properties.typezone, // bijv 'U' (Urbain), 'N' (Naturel)
-      code: f.properties.libelle,  // bijv 'Ua', 'N1'
-      label: f.properties.libelong // Volledige omschrijving
+// --- Helpers ---
+
+async function fetchGpuByPoint(lat, lon) {
+  try {
+    const geom = JSON.stringify({ type: "Point", coordinates: [parseFloat(lon), parseFloat(lat)] });
+    const url = `https://apicarto.ign.fr/api/gpu/zone-urba?geom=${encodeURIComponent(geom)}`;
+    const resp = await fetchWithTimeout(url);
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    return (json.features || []).map(f => ({
+      type: f.properties.typezone,
+      code: f.properties.libelle,
+      label: f.properties.libelong
     }));
+  } catch (e) { return []; }
+}
 
-    return res.status(200).json({ ok: true, zones });
+async function fetchGpuByPartition(insee) {
+  try {
+    // We vragen de "partition" (het document) op. Als die bestaat, is er een plan.
+    const url = `https://apicarto.ign.fr/api/gpu/document?partition=DU_${insee}`;
+    const resp = await fetchWithTimeout(url);
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    // Als er features zijn, is er een plan
+    return (json.features || []).length > 0 ? [true] : [];
+  } catch (e) { return []; }
+}
 
-  } catch (error) {
-    console.error('GPU API error:', error);
-    // Soft fail: stuur lege zones terug zodat de app niet crasht
-    return res.status(200).json({ ok: true, zones: [] });
+async function fetchWithTimeout(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
   }
 }
