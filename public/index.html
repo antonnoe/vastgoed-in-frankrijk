@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Immodiagnostique - Infofrankrijk.com</title>
+  <title>Immodiagnostique - Vastgoed Intelligence</title>
   <link rel="stylesheet" href="style.css">
   <link rel="icon" href="data:;base64,iVBORw0KGgo=">
 </head>
@@ -12,106 +12,124 @@
   <header class="main-header">
     <div class="container">
       <h1>IMMODIAGNOSTIQUE</h1>
-      <p class="subtitle">Een concept van Infofrankrijk.com</p>
+      <p class="subtitle">Real-time vastgoed intelligence voor Frankrijk</p>
     </div>
   </header>
 
   <main class="container">
     
     <section id="input-section" class="card">
-      <h2>Voer beschikbare gegevens in</h2>
-      <p class="intro-text">
-        Vul één adres in, óf plak een advertentielink. Plak ook de advertentietekst voor meer context.
-        Heb je nog geen exact adres? Start met de plaatsnaam.
-      </p>
+      <div class="intro-box">
+        <h2>Start de Analyse</h2>
+        <p>
+          Dit systeem activeert directe koppelingen met <strong>5 Franse overheidsdatabases</strong> (IGN, Géorisques, DVF, Insee, Apicarto). 
+          Wij kruisverwijzen kadastrale data, risicokaarten en marktwaarde met een AI-analyse van de advertentie.
+        </p>
+      </div>
 
       <div class="form-grid">
         <div class="form-group full-width">
-          <label for="advert-link">Advertentielink (optioneel)</label>
+          <label for="advert-link">Link naar advertentie (optioneel)</label>
           <input type="url" id="advert-link" placeholder="https://www.leboncoin.fr/..." />
         </div>
 
         <div class="form-group">
-          <label for="city">Plaatsnaam *</label>
-          <input type="text" id="city" placeholder="Bijv. Montreuil-sur-Mer" required />
+          <label for="city">Plaatsnaam * <small>(Noodzakelijk voor database-connectie)</small></label>
+          <input type="text" id="city" placeholder="Bijv. Fontaine-Étoupefour" required />
         </div>
         <div class="form-group">
           <label for="postcode">Postcode</label>
-          <input type="text" id="postcode" placeholder="62170" />
+          <input type="text" id="postcode" placeholder="14790" />
         </div>
 
         <div class="form-group">
           <label for="price">Vraagprijs (€)</label>
-          <input type="number" id="price" placeholder="700000" />
-          <small>Facultatief maar aanbevolen</small>
+          <input type="number" id="price" placeholder="460000" />
         </div>
         <div class="form-group">
           <label for="surface">Woonoppervlakte (m²)</label>
-          <input type="number" id="surface" placeholder="320" />
+          <input type="number" id="surface" placeholder="154" />
         </div>
 
         <div class="form-group">
           <label for="street">Straatnaam</label>
-          <input type="text" id="street" placeholder="Rue Pierre Ledent" />
+          <input type="text" id="street" placeholder="" />
         </div>
         <div class="form-group">
           <label for="housenr">Huisnummer</label>
-          <input type="text" id="housenr" placeholder="12" />
+          <input type="text" id="housenr" placeholder="" />
         </div>
 
         <div class="form-group full-width">
-          <label for="ad-text">Advertentietekst (optioneel)</label>
-          <textarea id="ad-text" rows="5" placeholder="Plak hier de volledige omschrijving... (Mag in Frans, Engels of Nederlands)"></textarea>
+          <label for="ad-text">Advertentietekst (Bron voor AI)</label>
+          <textarea id="ad-text" rows="8" placeholder="Instructie voor het beste resultaat:
+
+1. Klik op de advertentiesite op 'Lees meer' / 'Voir plus' (zodat alle tekst zichtbaar is).
+2. Druk op Ctrl+A (Alles selecteren) en daarna Ctrl+C (Kopiëren).
+3. Klik hier en druk op Ctrl+V (Plakken).
+
+Ons systeem filtert automatisch de navigatie, cookies en reclame eruit!"></textarea>
         </div>
       </div>
 
       <div class="button-group">
-        <button id="btn-generate" class="btn btn-primary">Start Analyse</button>
-        <button id="btn-cancel" class="btn btn-secondary" hidden>Annuleren</button>
+        <button id="btn-generate" class="btn btn-primary">🚀 Start Motoren & Analyseer</button>
+        <button id="btn-cancel" class="btn btn-secondary" hidden>Afbreken</button>
       </div>
     </section>
 
     <section id="progress-section" class="card">
       <div class="progress-header">
-        <h3>Voortgang</h3>
-        <div class="spinner-box">
-          <div id="progress-spinner" class="spinner" style="visibility: hidden;"></div>
-          <span id="spinner-label">Wachten op start…</span>
+        <h3>Systeem Status</h3>
+        
+        <div class="system-status-box">
+          <div id="radar" class="radar-scanner" style="visibility: hidden;"></div>
+          <div class="spinner-box">
+            <div id="progress-spinner" class="spinner" style="visibility: hidden;"></div>
+            <span id="spinner-label" class="status-text">Gereed voor start.</span>
+          </div>
         </div>
       </div>
 
-      <ul id="progress-pipeline" class="pipeline">
-        <li class="pipe-step" data-step="commune" data-state="idle">
-          <span class="step-icon"></span>
-          <span class="step-label">Raadpleegt gemeente</span>
-          <small id="step-commune-meta" class="step-meta"></small>
-        </li>
-        <li class="pipe-step" data-step="gpu" data-state="idle">
-          <span class="step-icon"></span>
-          <span class="step-label">Raadpleegt GPU (PLU/zonering)</span>
-          <small id="step-gpu-meta" class="step-meta"></small>
-        </li>
-        <li class="pipe-step" data-step="gpudoc" data-state="idle">
-          <span class="step-icon"></span>
-          <span class="step-label">Haalt GPU-documenten op</span>
-          <small id="step-gpudoc-meta" class="step-meta"></small>
-        </li>
-        <li class="pipe-step" data-step="dvf" data-state="idle">
-          <span class="step-icon"></span>
-          <span class="step-label">Controleert DVF (verkoopprijzen)</span>
-          <small id="step-dvf-meta" class="step-meta"></small>
-        </li>
-        <li class="pipe-step" data-step="georisques" data-state="idle">
-          <span class="step-icon"></span>
-          <span class="step-label">Checkt Géorisques (risico’s)</span>
-          <small id="step-georisques-meta" class="step-meta"></small>
-        </li>
-        <li class="pipe-step" data-step="ai" data-state="idle">
-          <span class="step-icon"></span>
-          <span class="step-label">Analyseert (Gemini)</span>
-          <small id="step-ai-meta" class="step-meta"></small>
-        </li>
-      </ul>
+      <div class="pipeline-container">
+        <ul id="progress-pipeline" class="pipeline">
+          <li class="pipe-step" data-step="commune" data-state="idle">
+            <span class="step-icon"></span>
+            <div class="step-content">
+              <span class="step-label">1. Gemeente Database (Insee)</span>
+              <small id="step-commune-meta" class="step-meta"></small>
+            </div>
+          </li>
+          <li class="pipe-step" data-step="dvf" data-state="idle">
+            <span class="step-icon"></span>
+            <div class="step-content">
+              <span class="step-label">2. Historische Marktprijzen (Etalab)</span>
+              <small id="step-dvf-meta" class="step-meta"></small>
+            </div>
+          </li>
+          <li class="pipe-step" data-step="georisques" data-state="idle">
+            <span class="step-icon"></span>
+            <div class="step-content">
+              <span class="step-label">3. Risico-analyse (Géorisques/Gaspar)</span>
+              <small id="step-georisques-meta" class="step-meta"></small>
+            </div>
+          </li>
+          <li class="pipe-step" data-step="gpu" data-state="idle">
+            <span class="step-icon"></span>
+            <div class="step-content">
+              <span class="step-label">4. Bestemmingsplan & Zonering (IGN/GPU)</span>
+              <small id="step-gpu-meta" class="step-meta"></small>
+            </div>
+          </li>
+          <li class="pipe-step" data-step="ai" data-state="idle">
+            <span class="step-icon"></span>
+            <div class="step-content">
+              <span class="step-label">5. AI Vastgoed Interpretatie (Gemini)</span>
+              <small id="step-ai-meta" class="step-meta"></small>
+            </div>
+          </li>
+        </ul>
+      </div>
 
       <div id="progress-log" class="log-box"></div>
     </section>
@@ -120,16 +138,15 @@
       
       <section class="card result-card">
         <div class="card-header-actions">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-             <h2>Diagnose</h2>
+          <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+             <h2>Diagnose Rapport</h2>
              <button id="btn-export" class="btn btn-sm btn-secondary">🖨️ Print / PDF</button>
           </div>
         </div>
 
         <div class="diagnosis-block">
           <h3>1. Vastgoeddossier</h3>
-          <div id="keyfacts" class="keyfacts-grid">
-            </div>
+          <div id="keyfacts" class="keyfacts-grid"></div>
         </div>
 
         <hr>
@@ -147,23 +164,21 @@
         <hr>
 
         <div class="diagnosis-block">
-          <h3>3. Actieplan</h3>
-          <ul id="actieplan-list" class="check-list">
-            </ul>
+          <h3>3. Strategisch Actieplan</h3>
+          <ul id="actieplan-list" class="check-list"></ul>
         </div>
 
         <hr>
 
         <div class="diagnosis-block">
-          <h3>4. Prijsvergelijking (DVF)</h3>
-          <div id="price-compare" class="price-compare-box">
-            </div>
+          <h3>4. Marktwaarde Check (DVF)</h3>
+          <div id="price-compare" class="price-compare-box"></div>
         </div>
 
         <hr>
 
         <div class="diagnosis-block swot-section">
-          <h3>Bijlage A: SWOT</h3>
+          <h3>Bijlage A: SWOT Analyse</h3>
           <div id="swot-container" class="swot-grid">
             <div class="swot-column">
               <h4 class="swot-title positive">Sterke punten</h4>
@@ -185,45 +200,47 @@
         </div>
 
         <div class="disclaimer-box">
-          <p><strong>Disclaimer:</strong> Deze analyse is indicatief en informatief. Raadpleeg notaris, makelaar en de officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme). Aan deze tool kunnen geen rechten worden ontleend.</p>
+          <p><strong>Disclaimer:</strong> Deze analyse is geautomatiseerd. Raadpleeg notaris, makelaar en officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme) voor definitieve verificatie.</p>
         </div>
 
       </section>
 
       <section id="contact" class="card contact-card" hidden>
-        <h3>Direct contact</h3>
-        <p>Kies per ontvanger het kanaal en de taal. De knoptekst past zich automatisch aan.</p>
+        <h3>Direct Actie Ondernemen</h3>
+        <p>Selecteer een ontvanger om direct een concept-bericht te openen.</p>
         
         <div class="contact-grid">
           <div class="contact-role">
             <h4>Notaris</h4>
             <div class="contact-options">
-               <button>E-mail</button>
-               <button>Telefoon</button>
+               <button>✉️ E-mail opstellen</button>
+               <button>📞 Bellen</button>
             </div>
           </div>
           <div class="contact-role">
             <h4>Makelaar</h4>
              <div class="contact-options">
-               <button>E-mail</button>
-               <button>Telefoon</button>
+               <button>✉️ E-mail opstellen</button>
+               <button>📞 Bellen</button>
             </div>
           </div>
           <div class="contact-role">
             <h4>Verkoper</h4>
              <div class="contact-options">
-               <button>E-mail</button>
-               <button>Telefoon</button>
+               <button>✉️ E-mail opstellen</button>
+               <button>📞 Bellen</button>
             </div>
           </div>
         </div>
       </section>
 
-    </div> </main>
+    </div>
+
+  </main>
 
   <footer class="main-footer">
     <div class="container">
-      <p>&copy; 2025 Infofrankrijk.com - Immodiagnostique</p>
+      <p>&copy; 2025 Infofrankrijk.com - Immodiagnostique Engine</p>
     </div>
   </footer>
 
