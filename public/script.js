@@ -1,10 +1,14 @@
-// /public/script.js  v: gpu-smart-fallback
+// /public/script.js  v: final-complete
 
 (() => {
-  // ---------- DOM helpers ----------
-  const $ = (sel) => document.querySelector(sel);
-  const byId = (id) => document.getElementById(id);
+  console.log('Immodiagnostique Script Loaded'); // Debug check
 
+  // ---------- DOM helpers ----------
+  const byId = (id) => document.getElementById(id);
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+  // Elements
   const spinner = byId('progress-spinner');
   const spinnerLabel = byId('spinner-label');
   const pipeline = byId('progress-pipeline');
@@ -17,12 +21,13 @@
   const resultCard = byId('result');
   const contactCard = byId('contact');
 
-  // Resultaat boxen
+  // Resultaat containers
   const keyfactsBox = byId('keyfacts');
   const envBadges = byId('env-badges');
   const envLinks = byId('env-links');
   const actieplanList = byId('actieplan-list');
   const priceCmpBox = byId('price-compare');
+  const locationProfileBox = byId('location-profile'); // NIEUW
 
   // ---------- UI: pipeline & log ----------
   const ts = () => {
@@ -54,25 +59,35 @@
 
   const resetPipeline = () => {
     if (!pipeline) return;
-    document.querySelectorAll('.pipe-step').forEach(li => li.setAttribute('data-state', 'idle'));
+    $$('.pipe-step').forEach(li => li.setAttribute('data-state', 'idle'));
     ['commune','gpu','gpudoc','dvf','georisques','ai'].forEach(s => {
       const m = byId(`step-${s}-meta`);
       if (m) m.textContent = '';
     });
     if (logBox) logBox.innerHTML = '';
+    if (locationProfileBox) {
+        locationProfileBox.innerHTML = '';
+        locationProfileBox.hidden = true;
+    }
     setSpinner(false, 'Wachten op start…');
   };
 
   // ---------- Fetch helpers ----------
   const getJSON = async (url, init) => {
-    const r = await fetch(url, init);
-    const ct = r.headers.get('content-type') || '';
-    if (!r.ok) {
-      if (r.status === 404) return null;
-      throw new Error(`HTTP ${r.status}`);
+    try {
+      const r = await fetch(url, init);
+      const ct = r.headers.get('content-type') || '';
+      if (!r.ok) {
+        // 404 is vaak geen harde error (bijv. geen GPU plan)
+        if (r.status === 404) return null;
+        throw new Error(`HTTP ${r.status}`);
+      }
+      if (!ct.includes('application/json')) return null;
+      return await r.json();
+    } catch (e) {
+      console.error("Fetch error:", url, e);
+      throw e;
     }
-    if (!ct.includes('application/json')) return null;
-    return r.json();
   };
 
   // ---------- Render helpers ----------
@@ -105,11 +120,10 @@
     if (envBadges) {
       let html = '';
       
-      // 1. Géorisques badges (Strenger kleurbeleid)
+      // 1. Géorisques badges (Rood/Groen)
       const mapRisk = (key, label) => {
         const val = risks ? risks[key] : null;
         if (val === true) return `<span class="badge badge-danger">⚠️ ${label}</span>`;
-        // Bij false tonen we het toch, maar groen (zodat je ziet dat het gecheckt is)
         if (val === false) return `<span class="badge badge-success">✓ ${label}</span>`;
         return `<span class="badge">— ${label}</span>`;
       };
@@ -122,15 +136,14 @@
 
       // 2. GPU / Zonering badge
       if (gpu && gpu.length > 0) {
-        const z = gpu[0]; // Pak de eerste (vaak de enige of belangrijkste)
+        const z = gpu[0];
         const code = z.code || z.type || 'Plan';
         const label = z.label || '';
         
-        // Visueel onderscheid: Exact vs Gemeente
+        // Blauw voor exact, Oranje voor gemeente-fallback
         const badgeStyle = matchType === 'exact' 
-          ? 'background:#e3f2fd; color:#0d47a1; border:1px solid #90caf9;' // Blauw (Exact)
-          : 'background:#fff3e0; color:#e65100; border:1px solid #ffcc80;'; // Oranje (Gemeente-fallback)
-
+          ? 'background:#e3f2fd; color:#0d47a1; border:1px solid #90caf9;' 
+          : 'background:#fff3e0; color:#e65100; border:1px solid #ffcc80;';
         const icon = matchType === 'exact' ? '📍' : '🏙️';
         
         html += `<span class="badge" style="${badgeStyle}">${icon} PLU: ${code} ${label ? `(${label})` : ''}</span>`;
@@ -210,14 +223,18 @@
 
     const btns = container.querySelectorAll('button');
     btns.forEach(btn => {
+      const roleBlock = btn.closest('.contact-role');
+      const roleTitle = roleBlock ? roleBlock.querySelector('h4').innerText : 'Verkoper';
       const btnText = btn.innerText.toLowerCase();
+      
+      // Reset
       btn.onclick = null;
       btn.disabled = false;
 
       if (btnText.includes('e-mail')) {
         btn.onclick = () => {
-          const subject = `Betreft: Woning ${addressInfo.city}`;
-          let body = `Geachte,\n\nIk heb interesse in de woning te ${addressInfo.city} (${addressInfo.postcode}).\n`;
+          const subject = `Betreft: Woning ${addressInfo.city} (${addressInfo.postcode})`;
+          let body = `Geachte ${roleTitle},\n\nIk heb interesse in de woning te ${addressInfo.city}.\n`;
           if (addressInfo.price) body += `Vraagprijs: EUR ${addressInfo.price}\n`;
           body += `\nGraag zou ik... (uw vraag hier)\n\nMet vriendelijke groet,`;
           
@@ -233,6 +250,9 @@
   let aborter = null;
 
   const onGenerate = async () => {
+    console.log("Start knop geklikt");
+
+    // Reset UI
     resetPipeline();
     setSpinner(true, 'Dossier wordt opgebouwd…');
     addLog('Dossier wordt opgebouwd…');
@@ -242,6 +262,7 @@
     if(btnCancel) btnCancel.hidden = false;
     if(btnExport) btnExport.hidden = true;
 
+    // Inputs lezen
     const city = byId('city')?.value?.trim() || '';
     const postcode = byId('postcode')?.value?.trim() || '';
     const street = byId('street')?.value?.trim() || '';
@@ -252,6 +273,7 @@
     const advertLink = byId('advert-link')?.value?.trim() || '';
 
     if (!city) {
+      console.warn("Geen plaatsnaam ingevuld");
       setSpinner(false, 'Vul minimaal de plaatsnaam in.');
       addLog('❌ Plaatsnaam ontbreekt.');
       return;
@@ -263,8 +285,15 @@
       // 1. Commune
       setStep('commune', 'active');
       addLog('Raadpleegt gemeente…');
-      const C = await getJSON(`/api/commune?city=${city}&postcode=${postcode}`, { signal: aborter.signal });
-      if (!C?.ok || !C?.commune?.insee) throw new Error('Geen INSEE gevonden');
+      // Bouw query
+      let cUrl = `/api/commune?city=${encodeURIComponent(city)}`;
+      if (postcode) cUrl += `&postcode=${encodeURIComponent(postcode)}`;
+
+      const C = await getJSON(cUrl, { signal: aborter.signal });
+      
+      if (!C?.ok || !C?.commune?.insee) {
+          throw new Error('Gemeente niet gevonden. Check spelling.');
+      }
       const com = C.commune;
       setStep('commune', 'done', `${com.name} (${com.insee})`);
       addLog('✔ Raadpleegt gemeente…');
@@ -277,7 +306,7 @@
       setStep('dvf', 'done', dvfMedian ? 'Mediaan gevonden' : 'Fallback');
       addLog('✔ DVF klaar');
 
-      // 3. Géorisques (Strenge versie wordt aangeroepen door backend)
+      // 3. Géorisques
       setStep('georisques', 'active');
       addLog('Checkt Géorisques…');
       let riskData = {};
@@ -288,40 +317,109 @@
         addLog('✔ Géorisques klaar');
       } catch (e) { setStep('georisques', 'error'); }
 
-      // 4. GPU (Slimme fallback versie)
+      // 4. GPU (Smart Fallback)
       setStep('gpu', 'active');
       addLog('Checkt Zonering (GPU)…');
       let gpuData = [];
       let gpuMatch = 'none';
       try {
-        // STUUR LAT/LON ÉN INSEE MEE VOOR FALLBACK
         let url = `/api/gpu?insee=${com.insee}`;
         if (com.lat && com.lon) {
            url += `&lat=${com.lat}&lon=${com.lon}`;
         }
-        
         const GPU = await getJSON(url, { signal: aborter.signal });
         if (GPU?.ok) {
             gpuData = GPU.zones || [];
-            gpuMatch = GPU.match || 'none'; // 'exact', 'commune' of 'none'
+            gpuMatch = GPU.match || 'none';
         }
-
-        // Logica voor display
-        if (gpuMatch === 'exact') {
-            setStep('gpu', 'done', '📍 Exacte zone');
-        } else if (gpuMatch === 'commune') {
-            setStep('gpu', 'done', '🏙️ Gemeente-plan');
-        } else {
-            setStep('gpu', 'done', 'Geen plan');
-        }
+        
+        if (gpuMatch === 'exact') setStep('gpu', 'done', '📍 Exacte zone');
+        else if (gpuMatch === 'commune') setStep('gpu', 'done', '🏙️ Gemeente-plan');
+        else setStep('gpu', 'done', 'Geen plan');
+        
         setStep('gpudoc', 'done'); 
         addLog('✔ GPU Zonering klaar');
       } catch (e) { setStep('gpu', 'error'); }
 
-      // 5. AI
+      // 5. AI Analyse
       setStep('ai', 'active', 'Gemini');
       addLog('Genereert AI-analyse…');
       
       const dossierText = `
         Plaats: ${com.name} (${postcode})
-        Adres: ${street} ${hous
+        Adres: ${street} ${housenr}
+        Vraagprijs: ${price || '?'}
+        Oppervlakte: ${surface || '?'}
+        Advertentietekst: ${adText}
+        Link: ${advertLink}
+      `.trim();
+
+      const signals = {
+        price,
+        dvf: { median_price: dvfMedian },
+        georisques: riskData,
+        gpu: gpuData,
+        gpuMatch: gpuMatch,
+        advertentie: { truncated: adText.length < 50 }
+      };
+
+      const AI = await getJSON('/api/analyse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dossier: dossierText, signals }),
+        signal: aborter.signal
+      });
+
+      if(AI?.ok && AI?.output) {
+         setStep('ai', 'done');
+         addLog('✔ Analyse gereed');
+         
+         const out = AI.output;
+         renderActieplan(out.actieplan);
+         renderSwot(out.swot);
+         
+         // NIEUW: Locatie Profiel
+         if (locationProfileBox) {
+            locationProfileBox.textContent = out.locatie_profiel || '';
+            locationProfileBox.hidden = !out.locatie_profiel;
+         }
+      } else {
+         throw new Error(AI?.error || 'AI mislukt');
+      }
+
+      // Render Final Data
+      renderKeyfacts({
+        city, postcode, street, housenr, price, surface,
+        commune: { name: com.name, insee: com.insee, dvf_note: DVF?.source === 'commune' ? 'Gemeente-data' : 'Departement-fallback' }
+      });
+      
+      renderEnv({ insee: com.insee, risks: riskData, gpu: gpuData, matchType: gpuMatch });
+      renderPriceCompare({ price, surface, dvfMedian });
+      setupContactButtons({ city: com.name, postcode: postcode, price: price });
+
+      setSpinner(false, 'Klaar.');
+      if(byId('result')) byId('result').hidden = false;
+      if(byId('contact')) byId('contact').hidden = false;
+      if(btnExport) btnExport.hidden = false;
+      if(btnCancel) btnCancel.hidden = true;
+
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      setSpinner(false, 'Fout.');
+      addLog(`❌ ${err.message}`);
+      console.error(err);
+      setStep('commune', 'error');
+    } finally {
+      aborter = null;
+    }
+  };
+
+  const onCancel = () => { if (aborter) aborter.abort(); setSpinner(false, 'Afgebroken.'); };
+  const onExport = () => window.print();
+
+  // Init Event Listeners
+  if (btnGenerate) btnGenerate.addEventListener('click', onGenerate);
+  if (btnCancel) btnCancel.addEventListener('click', onCancel);
+  if (btnExport) btnExport.addEventListener('click', onExport);
+
+})();
