@@ -1,57 +1,38 @@
 // /api/analyse.js
-// Immodiagnostique – Analyse endpoint (V5: Location Intel + Seller Check + Dutch Enforcement)
+// Immodiagnostique – Analyse endpoint (V6: Auto-Extraction Data)
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ ok: false, error: "Method Not Allowed" });
-  }
+  if (req.method !== 'POST') return res.status(405).json({ ok: false, error: "Method Not Allowed" });
 
   const { dossier, signals } = (req.body || {});
-  
-  if ((!dossier || !dossier.trim()) && (!signals)) {
-    return res.status(400).json({ ok: false, error: "Geen input data." });
-  }
+  if ((!dossier || !dossier.trim()) && (!signals)) return res.status(400).json({ ok: false, error: "Geen input." });
 
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  if (!GEMINI_API_KEY) {
-    return res.status(500).json({ ok: false, error: "Server config error: API Key missing" });
-  }
+  if (!GEMINI_API_KEY) return res.status(500).json({ ok: false, error: "API Key missing" });
 
-  // 1. Bouw de 'Ultimate' Prompt
   const prompt = buildDeepAnalysisPrompt(dossier, signals);
-
-  // 2. Call Gemini (met retry)
   const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  
   let rawText = null;
   let modelUsed = '';
 
   for (const model of models) {
     try {
       rawText = await callGemini(GEMINI_API_KEY, model, prompt);
-      if (rawText) {
-        modelUsed = model;
-        break;
-      }
-    } catch (e) {
-      console.error(`Model ${model} failed:`, e.message);
-    }
+      if (rawText) { modelUsed = model; break; }
+    } catch (e) { console.error(e); }
   }
 
-  if (!rawText) {
-    return res.status(502).json({ ok: false, error: "AI analyse mislukt." });
-  }
+  if (!rawText) return res.status(502).json({ ok: false, error: "AI analyse mislukt." });
 
-  // 3. Parse output
   let parsed = parseStrictJson(rawText);
   if (!parsed) parsed = parseAiTextHeuristic(rawText);
 
-  // 4. Schoonmaak & Verrijking
   const finalData = sanitizeAndEnrich(parsed, signals);
 
   return res.status(200).json({ ok: true, model: modelUsed, output: finalData });
 }
 
-// --- Gemini Caller ---
 async function callGemini(key, model, text) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
   const response = await fetch(url, {
@@ -64,59 +45,40 @@ async function callGemini(key, model, text) {
   return data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
-// --- PROMPT BUILDER V5 (Deep Analysis) ---
 function buildDeepAnalysisPrompt(dossier, signals) {
   const hints = [];
+  if (signals?.price) hints.push(`- Opgegeven Vraagprijs: €${signals.price}`);
+  if (signals?.dvf?.median_price) hints.push(`- DVF Mediaan: €${signals.dvf.median_price}/m²`);
   
-  // Harde data context
-  if (signals?.price) hints.push(`- Vraagprijs: €${signals.price}`);
-  if (signals?.dvf?.median_price) hints.push(`- Buurtgemiddelde (DVF): €${signals.dvf.median_price}/m²`);
-  
-  // Zonering
   if (signals?.gpuMatch === 'exact') {
     const z = signals.gpu[0] || {};
-    hints.push(`- Bestemming (PLU): Zone ${z.code} (${z.label}). Dit is een exact vastgesteld feit.`);
-  } else if (signals?.gpuMatch === 'commune') {
-    hints.push(`- Bestemming: Gemeente heeft digitaal plan, maar exact perceel niet gevonden.`);
+    hints.push(`- Bestemming (PLU): Zone ${z.code} (${z.label}).`);
   }
 
-  // Risico's
   if (signals?.georisques) {
     const r = signals.georisques;
     const riskNames = [];
     if (r.flood) riskNames.push("Overstroming");
-    if (r.argile) riskNames.push("Klei/Krimp (Argile)");
+    if (r.argile) riskNames.push("Klei/Krimp");
     if (r.industrial) riskNames.push("Industrieel");
-    
-    if (riskNames.length > 0) {
-      hints.push(`- GEMEENTE RISICO'S (Data): ${riskNames.join(', ')}. LET OP: Check tekst of het huis specifiek risico loopt.`);
-    }
+    if (riskNames.length > 0) hints.push(`- GEMEENTE RISICO'S: ${riskNames.join(', ')}.`);
   }
 
   return `
-    Je bent Immodiagnostique, de expert voor vastgoed in Frankrijk.
+    Je bent Immodiagnostique, vastgoedexpert.
     
-    OPDRACHT:
-    Analyseer de woningadvertentie diepgaand. Combineer de tekst met je eigen geografische kennis.
+    OPDRACHT 1: DATA EXTRACTIE
+    Haal de volgende getallen uit de tekst (als ze er staan). Negeer valuta of eenheden, geef puur het getal (integer).
+    - prijs (Vraagprijs)
+    - oppervlakte (Woonoppervlakte in m2)
+    - perceel (Terrein/Tuin in m2)
 
-    1. LOCATIE PROFIEL (Context):
-       Gebruik je kennis van de plaatsnaam in de tekst. 
-       - Wat voor type plaats is het? (Dorp, stad, gehucht, forensengemeente?)
-       - Hoe ver ligt het van grote steden, kust of bezienswaardigheden?
-       - Wat is de demografische sfeer (Levendig vs Slaperig)?
-       Schrijf dit als een compacte, informatieve paragraaf.
+    OPDRACHT 2: ANALYSE
+    - Locatieprofiel: Type plaats, afstand voorzieningen.
+    - Verkoper: Particulier (PAP) of Makelaar?
+    - SWOT: Sterke/Zwakke punten. Weeg risico's tegen ligging.
 
-    2. VERKOPER ANALYSE:
-       - Is dit een particulier (PAP, 'entre particuliers', 'propriétaire') of een makelaar?
-       - Indien particulier: Zet 'Geen makelaarscourtage' bij sterke punten, maar waarschuw voor 'Minder juridische bescherming' bij risico's.
-       - Indien makelaar: Als de naam bekend is (bijv. IAD, Safti, lokaal kantoor), benoem dit neutraal.
-
-    3. TECHNISCHE CHECK:
-       - Let op bouwjaar, energielabel (DPE), verwarming (warmtepomp/hout is top, olie/elektrisch is matig).
-       - Let op specifieke termen: 'Travaux à prévoir' (Kluswoning), 'Viager' (Lijfrente), 'Loué' (Verhuurd).
-
-    4. TAAL:
-       Antwoord ALTIJD in het NEDERLANDS.
+    Taal: NEDERLANDS.
 
     Input Data:
     ${hints.join('\n')}
@@ -126,7 +88,12 @@ function buildDeepAnalysisPrompt(dossier, signals) {
 
     Verwacht JSON Schema:
     {
-      "locatie_profiel": "Tekst...",
+      "extracted": {
+         "price": 0,
+         "surface": 0,
+         "plot": 0
+      },
+      "locatie_profiel": "...",
       "swot": {
         "sterke_punten": ["..."],
         "mogelijke_zorgpunten": ["..."],
@@ -134,12 +101,10 @@ function buildDeepAnalysisPrompt(dossier, signals) {
         "mogelijke_bedreigingen": ["..."]
       },
       "actieplan": ["..."],
-      "communicatie": { "notaris": ["..."], "makelaar": ["..."], "verkoper": ["..."] }
+      "communicatie": { "notaris": [], "makelaar": [], "verkoper": [] }
     }
   `;
 }
-
-// --- PARSERS & CLEANERS ---
 
 function parseStrictJson(text) {
   const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -148,7 +113,8 @@ function parseStrictJson(text) {
 
 function parseAiTextHeuristic(text) {
   return {
-    locatie_profiel: "Kon locatieprofiel niet genereren uit ruwe data.",
+    extracted: { price: 0, surface: 0, plot: 0 },
+    locatie_profiel: "Geen profiel.",
     swot: { sterke_punten: ["Zie ruwe tekst."] },
     actieplan: [],
     communicatie: {}
@@ -157,31 +123,28 @@ function parseAiTextHeuristic(text) {
 
 function sanitizeAndEnrich(obj, signals) {
   const out = {
-    locatie_profiel: obj?.locatie_profiel || "Geen profiel beschikbaar.",
-    swot: {
-      sterke_punten: obj?.swot?.sterke_punten || [],
-      mogelijke_zorgpunten: obj?.swot?.mogelijke_zorgpunten || [],
-      mogelijke_kansen: obj?.swot?.mogelijke_kansen || [],
-      mogelijke_bedreigingen: obj?.swot?.mogelijke_bedreigingen || []
+    extracted: {
+        price: Number(obj?.extracted?.price) || 0,
+        surface: Number(obj?.extracted?.surface) || 0,
+        plot: Number(obj?.extracted?.plot) || 0
     },
-    actieplan: obj?.actieplan || [],
+    locatie_profiel: obj?.locatie_profiel || "Geen profiel.",
+    swot: {
+      sterke_punten: Array.isArray(obj?.swot?.sterke_punten) ? obj.swot.sterke_punten : [],
+      mogelijke_zorgpunten: Array.isArray(obj?.swot?.mogelijke_zorgpunten) ? obj.swot.mogelijke_zorgpunten : [],
+      mogelijke_kansen: Array.isArray(obj?.swot?.mogelijke_kansen) ? obj.swot.mogelijke_kansen : [],
+      mogelijke_bedreigingen: Array.isArray(obj?.swot?.mogelijke_bedreigingen) ? obj.swot.mogelijke_bedreigingen : []
+    },
+    actieplan: Array.isArray(obj?.actieplan) ? obj.actieplan : [],
     communicatie: {
       notaris: obj?.communicatie?.notaris || [],
       makelaar: obj?.communicatie?.makelaar || [],
       verkoper: obj?.communicatie?.verkoper || []
     }
   };
-
-  // Data Injectie: Prijs check
-  if (signals?.price && signals?.dvf?.median_price) {
-    const p = signals.price / (signals.surface || 100);
-    const m = signals.dvf.median_price;
-    // Alleen toevoegen als het verschil significant is (>50% afwijking)
-    if (p > m * 1.5) out.swot.mogelijke_zorgpunten.push(`Vraagprijs lijkt hoog t.o.v. buurtgemiddelde (€${m}/m²).`);
-  }
-
-  // Beperk lengtes
-  const clamp = (arr) => Array.isArray(arr) ? arr.slice(0, 6) : [];
+  
+  // Slice lists
+  const clamp = (arr) => arr.slice(0, 6);
   out.swot.sterke_punten = clamp(out.swot.sterke_punten);
   out.swot.mogelijke_zorgpunten = clamp(out.swot.mogelijke_zorgpunten);
   out.swot.mogelijke_kansen = clamp(out.swot.mogelijke_kansen);
