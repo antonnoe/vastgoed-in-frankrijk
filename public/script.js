@@ -1,9 +1,8 @@
-// /public/script.js  v: georisques-fix
+// /public/script.js  v: gpu-connected + email-buttons
 
 (() => {
   // ---------- DOM helpers ----------
   const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
   const byId = (id) => document.getElementById(id);
 
   const spinner = byId('progress-spinner');
@@ -28,10 +27,7 @@
   // ---------- UI: pipeline & log ----------
   const ts = () => {
     const d = new Date();
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    const ss = String(d.getSeconds()).padStart(2, '0');
-    return `${hh}:${mm}:${ss}`;
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
   };
 
   const setSpinner = (on, label) => {
@@ -58,7 +54,7 @@
 
   const resetPipeline = () => {
     if (!pipeline) return;
-    $$('.pipe-step').forEach(li => li.setAttribute('data-state', 'idle'));
+    document.querySelectorAll('.pipe-step').forEach(li => li.setAttribute('data-state', 'idle'));
     ['commune','gpu','gpudoc','dvf','georisques','ai'].forEach(s => {
       const m = byId(`step-${s}-meta`);
       if (m) m.textContent = '';
@@ -72,81 +68,70 @@
     const r = await fetch(url, init);
     const ct = r.headers.get('content-type') || '';
     if (!r.ok) {
-      // Probeer de foutmelding te lezen, maar faal niet hard als het HTML is
-      const text = await r.text().catch(()=>'');
-      // Als het een 404 is op een optionele API, return null (handled in logic)
-      if (r.status === 404) return null; 
-      throw new Error(`HTTP ${r.status} @ ${url}`);
+      if (r.status === 404) return null;
+      throw new Error(`HTTP ${r.status}`);
     }
-    if (!ct.includes('application/json')) {
-      // Soms stuurt Vercel HTML bij errors
-      return null;
-    }
+    if (!ct.includes('application/json')) return null;
     return r.json();
   };
 
   // ---------- Render helpers ----------
-  const euro = (n) => {
-    if (!Number.isFinite(n)) return '—';
-    return n.toLocaleString('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
-  };
-  const m2 = (n) => {
-    if (!Number.isFinite(n)) return '—';
-    return `${n.toLocaleString('nl-NL', { maximumFractionDigits: 0 })} m²`;
-  };
+  const euro = (n) => Number.isFinite(n) ? n.toLocaleString('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }) : '—';
+  const m2 = (n) => Number.isFinite(n) ? `${n.toLocaleString('nl-NL', { maximumFractionDigits: 0 })} m²` : '—';
 
   const renderKeyfacts = ({ city, postcode, street, housenr, price, surface, commune }) => {
     if (!keyfactsBox) return;
     keyfactsBox.innerHTML = '';
-    const facts = [];
+    const facts = [
+      ['Invoer', [postcode, city].filter(Boolean).join(' ') || '—'],
+      ['Vraagprijs', Number.isFinite(price) ? `${euro(price)} (facultatief maar aanbevolen)` : null],
+      ['Woonoppervlakte', Number.isFinite(surface) ? m2(surface) : null],
+      ['Exact perceel', 'later opvragen bij notaris'],
+      ['Adres (indien bekend)', [street, housenr].filter(Boolean).join(' ') || '- -'],
+      ['Gemeente', commune?.name],
+      ['INSEE', commune?.insee],
+      ['DVF', commune?.dvf_note]
+    ].filter(r => r[1]);
 
-    const inp = [postcode, city].filter(Boolean).join(' ');
-    facts.push(['Invoer', inp || '—']);
-    if (Number.isFinite(price)) facts.push(['Vraagprijs', `${euro(price)} (facultatief maar aanbevolen)`]);
-    if (Number.isFinite(surface)) facts.push(['Woonoppervlakte', m2(surface)]);
-    facts.push(['Exact perceel', 'later opvragen bij notaris']);
-    if (street || housenr) facts.push(['Adres (indien bekend)', [street, housenr].filter(Boolean).join(' ') || '—']);
-    if (commune?.name) facts.push(['Gemeente', commune.name]);
-    if (commune?.insee) facts.push(['INSEE', commune.insee]);
-    if (commune?.dvf_note) facts.push(['DVF', commune.dvf_note]);
-
-    for (const [k, v] of facts) {
+    facts.forEach(([k, v]) => {
       const row = document.createElement('div');
       row.className = 'fact';
       row.innerHTML = `<span class="k">${k}:</span> <span class="v">${v}</span>`;
       keyfactsBox.appendChild(row);
-    }
+    });
   };
 
-  // NIEUW: Badges worden nu dynamisch gekleurd
-  const renderEnv = ({ insee, risks }) => {
+  // NIEUW: Nu met GPU zones (Bestemmingsplan) en Risico's
+  const renderEnv = ({ insee, risks, gpu }) => {
     if (envBadges) {
-      // Default lijstje, we checken 'risks' object om te zien of ze true/false zijn
-      // Verwacht risks structuur: { flood: true, seismic: false, ... } of vergelijkbaar
+      let html = '';
       
+      // 1. Géorisques badges
       const mapRisk = (key, label) => {
-        const val = risks ? risks[key] : null; 
-        let className = 'badge';
-        let icon = '—';
-        
-        if (val === true || val === 'high') {
-          className += ' badge-danger'; // Rood
-          icon = '⚠️';
-        } else if (val === false || val === 'low') {
-          className += ' badge-success'; // Groen (optioneel)
-          icon = '✓';
-        }
-        return `<span class="${className}">${icon} ${label}</span>`;
+        const val = risks ? risks[key] : null;
+        if (val === true) return `<span class="badge badge-danger">⚠️ ${label}</span>`;
+        if (val === false) return `<span class="badge badge-success">✓ ${label}</span>`;
+        return `<span class="badge">— ${label}</span>`;
       };
+      
+      html += mapRisk('flood', 'Overstroming');
+      html += mapRisk('argile', 'Klei/krimp');
+      html += mapRisk('seismic', 'Seismisch');
+      html += mapRisk('radon', 'Radon');
+      html += mapRisk('industrial', 'Industrieel');
 
-      // Mappings op basis van wat api/georisques.js waarschijnlijk teruggeeft
-      envBadges.innerHTML = `
-        ${mapRisk('flood', 'Overstroming')}
-        ${mapRisk('argile', 'Klei/krimp')}
-        ${mapRisk('seismic', 'Seismisch')}
-        ${mapRisk('radon', 'Radon')}
-        ${mapRisk('industrial', 'Industrieel')}
-      `;
+      // 2. GPU / Zonering badge (NIEUW)
+      if (gpu && gpu.length > 0) {
+        // Pak de eerste zone (vaak de belangrijkste)
+        const z = gpu[0];
+        const label = z.code || z.type || 'Zone?';
+        const desc = z.label || '';
+        html += `<span class="badge" style="background:#e3f2fd; color:#0d47a1; border:1px solid #90caf9;">🏗️ PLU: ${label} ${desc ? `(${desc})` : ''}</span>`;
+      } else {
+        html += `<span class="badge">🏗️ PLU: Geen digitaal plan</span>`;
+      }
+
+      envBadges.innerHTML = html;
     }
 
     if (envLinks) {
@@ -161,11 +146,10 @@
     }
   };
 
-  const renderActieplan = (planItems) => {
+  const renderActieplan = (items) => {
     if (!actieplanList) return;
     actieplanList.innerHTML = '';
-    const items = (planItems && planItems.length > 0) ? planItems : ['Geen actiepunten gegenereerd.'];
-    items.forEach(txt => {
+    (items?.length ? items : ['Geen actiepunten.']).forEach(txt => {
       const li = document.createElement('li');
       li.textContent = txt;
       actieplanList.appendChild(li);
@@ -177,17 +161,12 @@
       const ul = byId(id);
       if (!ul) return;
       ul.innerHTML = '';
-      if (!items || items.length === 0) {
-        ul.innerHTML = '<li><i>Geen punten gevonden</i></li>';
-        return;
-      }
-      items.forEach(txt => {
+      (items?.length ? items : ['Geen punten gevonden']).forEach(txt => {
         const li = document.createElement('li');
         li.textContent = txt;
         ul.appendChild(li);
       });
     };
-    
     if (swot) {
       fill('list-sterke-punten', swot.sterke_punten);
       fill('list-mogelijke-zorgpunten', swot.mogelijke_zorgpunten);
@@ -200,45 +179,54 @@
     if (!priceCmpBox) return;
     priceCmpBox.innerHTML = '';
     if (!Number.isFinite(price) || !Number.isFinite(surface) || surface <= 0) {
-      const note = document.createElement('div');
-      note.className = 'pc-row pc-note';
-      note.textContent = 'Vul vraagprijs én woonoppervlakte in om m²-vergelijking te tonen.';
-      priceCmpBox.appendChild(note);
-      if (Number.isFinite(dvfMedian)) {
-        const row = document.createElement('div');
-        row.className = 'pc-row';
-        row.innerHTML = `<span class="k">DVF mediaan (gemeente):</span> <span class="v">${euro(dvfMedian)}/m²</span>`;
-        priceCmpBox.appendChild(row);
-      }
+      priceCmpBox.innerHTML = '<div class="pc-row pc-note">Vul vraagprijs én m² in voor vergelijking.</div>';
       return;
     }
     const askPerM2 = Math.round(price / surface);
-    const r1 = document.createElement('div');
-    r1.className = 'pc-row';
-    r1.innerHTML = `<span class="k">Vraagprijs per m²:</span> <span class="v">${euro(askPerM2)}/m²</span>`;
-    priceCmpBox.appendChild(r1);
-
+    let html = `<div class="pc-row"><span class="k">Vraagprijs per m²:</span> <span class="v">${euro(askPerM2)}/m²</span></div>`;
+    
     if (Number.isFinite(dvfMedian)) {
-      const r2 = document.createElement('div');
-      r2.className = 'pc-row';
-      r2.innerHTML = `<span class="k">DVF mediaan (gemeente):</span> <span class="v">${euro(dvfMedian)}/m²</span>`;
-      priceCmpBox.appendChild(r2);
       const deltaPct = ((askPerM2 - dvfMedian) / dvfMedian) * 100;
-      const r3 = document.createElement('div');
-      r3.className = 'pc-row';
       const dir = deltaPct >= 0 ? 'boven' : 'onder';
-      r3.innerHTML = `<span class="k">Indicatie:</span> <span class="v">${dir} mediaan (${deltaPct.toFixed(0)}%)</span>`;
-      priceCmpBox.appendChild(r3);
+      html += `<div class="pc-row"><span class="k">DVF mediaan (gemeente):</span> <span class="v">${euro(dvfMedian)}/m²</span></div>`;
+      html += `<div class="pc-row"><span class="k">Indicatie:</span> <span class="v">${dir} mediaan (${deltaPct.toFixed(0)}%)</span></div>`;
     } else {
-      const r2 = document.createElement('div');
-      r2.className = 'pc-row pc-note';
-      r2.textContent = 'Geen DVF-mediaan op gemeenteniveau; gebruik departementsbestanden.';
-      priceCmpBox.appendChild(r2);
+      html += '<div class="pc-row pc-note">Geen DVF-mediaan op gemeenteniveau.</div>';
     }
+    priceCmpBox.innerHTML = html;
   };
 
-  const reveal = (el) => { if (el) el.hidden = false; };
-  const hide = (el) => { if (el) el.hidden = true; };
+  // ---------- Email Generators (Direct Contact) ----------
+  const setupContactButtons = (addressInfo) => {
+    // Zoek alle contact knoppen binnen de #contact sectie
+    const container = byId('contact');
+    if (!container) return;
+
+    const btns = container.querySelectorAll('button');
+    btns.forEach(btn => {
+      // Bepaal context uit de DOM structuur (Notaris/Makelaar/Verkoper)
+      const roleBlock = btn.closest('.contact-role');
+      const roleTitle = roleBlock ? roleBlock.querySelector('h4').textContent.trim() : 'Contact';
+      const btnText = btn.innerText.toLowerCase();
+
+      // Reset
+      btn.onclick = null;
+      btn.disabled = false;
+
+      if (btnText.includes('e-mail')) {
+        btn.onclick = () => {
+          const subject = `Betreft: Woning ${addressInfo.city}`;
+          let body = `Geachte,\n\nIk heb interesse in de woning te ${addressInfo.city} (${addressInfo.postcode}).\n`;
+          if (addressInfo.price) body += `Vraagprijs: EUR ${addressInfo.price}\n`;
+          body += `\nGraag zou ik... (uw vraag hier)\n\nMet vriendelijke groet,`;
+          
+          window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        };
+      } else if (btnText.includes('telefoon')) {
+        btn.onclick = () => alert('Telefoonnummer niet automatisch gevonden. Raadpleeg de advertentie.');
+      }
+    });
+  };
 
   // ---------- Main flow ----------
   let aborter = null;
@@ -247,12 +235,14 @@
     resetPipeline();
     setSpinner(true, 'Dossier wordt opgebouwd…');
     addLog('Dossier wordt opgebouwd…');
+    
+    // UI toggle
+    if(byId('result')) byId('result').hidden = true;
+    if(byId('contact')) byId('contact').hidden = true;
+    if(btnCancel) btnCancel.hidden = false;
+    if(btnExport) btnExport.hidden = true;
 
-    reveal(btnCancel);
-    hide(btnExport);
-    hide(contactCard);
-    hide(resultCard);
-
+    // Inputs
     const city = byId('city')?.value?.trim() || '';
     const postcode = byId('postcode')?.value?.trim() || '';
     const street = byId('street')?.value?.trim() || '';
@@ -271,61 +261,52 @@
     aborter = new AbortController();
 
     try {
-      // Step 1: Commune
+      // 1. Commune
       setStep('commune', 'active');
       addLog('Raadpleegt gemeente…');
-      const q = new URLSearchParams();
-      q.set('city', city);
-      if (postcode) q.set('postcode', postcode);
-      
-      const C = await getJSON(`/api/commune?${q.toString()}`, { signal: aborter.signal });
+      const C = await getJSON(`/api/commune?city=${city}&postcode=${postcode}`, { signal: aborter.signal });
       if (!C?.ok || !C?.commune?.insee) throw new Error('Geen INSEE gevonden');
       const com = C.commune;
-      setStep('commune', 'done', `${com.name} (INSEE ${com.insee})`);
+      setStep('commune', 'done', `${com.name} (${com.insee})`);
       addLog('✔ Raadpleegt gemeente…');
 
-      // Step 2: DVF
+      // 2. DVF
       setStep('dvf', 'active');
-      addLog('Controleert DVF (verkoopprijzen)…');
-      const DVF = await getJSON(`/api/dvf?insee=${encodeURIComponent(com.insee)}`, { signal: aborter.signal });
-      let dvfMedian = null;
-      if (DVF?.ok) {
-        if (DVF.source === 'commune' && DVF.summary?.median_eur_m2) {
-          dvfMedian = Number(DVF.summary.median_eur_m2);
-          setStep('dvf', 'done', 'gemeente-mediaan');
-        } else {
-          setStep('dvf', 'done', 'departement-fallback');
-        }
-      } else {
-        setStep('dvf', 'error', 'fout bij DVF');
-      }
-      addLog('✔ DVF opgehaald');
+      addLog('Controleert DVF…');
+      const DVF = await getJSON(`/api/dvf?insee=${com.insee}`, { signal: aborter.signal });
+      let dvfMedian = (DVF?.source === 'commune' && DVF.summary?.median_eur_m2) ? Number(DVF.summary.median_eur_m2) : null;
+      setStep('dvf', 'done', dvfMedian ? 'Mediaan gevonden' : 'Fallback');
+      addLog('✔ DVF klaar');
 
-      // Step 3: Géorisques (NU TOEGEVOEGD!)
+      // 3. Géorisques
       setStep('georisques', 'active');
-      addLog('Checkt Géorisques (risico’s)…');
+      addLog('Checkt Géorisques…');
       let riskData = {};
       try {
-        const GR = await getJSON(`/api/georisques?insee=${encodeURIComponent(com.insee)}`, { signal: aborter.signal });
-        if (GR && GR.ok) {
-            riskData = GR.data || {};
-            setStep('georisques', 'done', 'Data opgehaald');
-            addLog('✔ Risico-data ontvangen');
-        } else {
-            setStep('georisques', 'done', 'Geen details');
-            addLog('⚠ Geen Géorisques data');
+        const GR = await getJSON(`/api/georisques?insee=${com.insee}`, { signal: aborter.signal });
+        if (GR?.ok) riskData = GR.data || {};
+        setStep('georisques', 'done');
+        addLog('✔ Géorisques klaar');
+      } catch (e) { setStep('georisques', 'error'); }
+
+      // 4. GPU (NIEUW: Bestemmingsplan)
+      setStep('gpu', 'active');
+      addLog('Checkt Zonering (GPU)…');
+      let gpuData = [];
+      try {
+        // We hebben lat/lon nodig. api/commune geeft die meestal terug als .lat/.lon
+        if (com.lat && com.lon) {
+           const GPU = await getJSON(`/api/gpu?lat=${com.lat}&lon=${com.lon}`, { signal: aborter.signal });
+           if (GPU?.ok) gpuData = GPU.zones || [];
         }
-      } catch (e) {
-        setStep('georisques', 'error');
-        addLog('⚠ Fout bij Géorisques');
-      }
+        setStep('gpu', 'done', gpuData.length ? `${gpuData.length} zone(s)` : 'Geen plan');
+        setStep('gpudoc', 'done'); // slaan we over voor visual
+        addLog('✔ GPU Zonering klaar');
+      } catch (e) { setStep('gpu', 'error'); }
 
-      setStep('gpu', 'done', 'bekijk link in Omgevingsdossier');
-      setStep('gpudoc', 'done', 'bekijk link in Omgevingsdossier');
-
-      // Step 4: AI
-      setStep('ai', 'active', 'gemini-2.0-flash');
-      addLog('Genereert AI-analyse (dit duurt even)…');
+      // 5. AI
+      setStep('ai', 'active', 'Gemini');
+      addLog('Genereert AI-analyse…');
       
       const dossierText = `
         Plaats: ${com.name} (${postcode})
@@ -337,20 +318,17 @@
       `.trim();
 
       const signals = {
-        price: price,
+        price,
         dvf: { median_price: dvfMedian },
-        // Hier sturen we nu de echte risico-data mee naar Gemini:
-        georisques: riskData, 
-        advertentie: {
-          keywords: [],
-          truncated: adText.length < 50
-        }
+        georisques: riskData,
+        gpu: gpuData, // stuur zones mee naar AI
+        advertentie: { truncated: adText.length < 50 }
       };
 
       const AI = await getJSON('/api/analyse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dossier: dossierText, signals: signals }),
+        body: JSON.stringify({ dossier: dossierText, signals }),
         signal: aborter.signal
       });
 
@@ -362,56 +340,43 @@
          renderActieplan(out.actieplan);
          renderSwot(out.swot);
       } else {
-         throw new Error(AI?.error || 'AI analyse mislukt');
+         throw new Error(AI?.error || 'AI mislukt');
       }
 
-      // Render Results
+      // Render Final
       renderKeyfacts({
-        city, postcode, street, housenr,
-        price: Number.isFinite(price) ? price : undefined,
-        surface: Number.isFinite(surface) ? surface : undefined,
-        commune: {
-          name: com.name, insee: com.insee,
-          dvf_note: DVF?.source === 'commune' ? 'DVF status: gemeente-mediaan beschikbaar.' : `DVF status: fallback op departement.`
-        }
+        city, postcode, street, housenr, price, surface,
+        commune: { name: com.name, insee: com.insee, dvf_note: DVF?.source === 'commune' ? 'Gemeente-data' : 'Departement-fallback' }
       });
       
-      // Geef de riskData mee aan renderEnv voor de kleurtjes
-      renderEnv({ insee: com.insee, lat: com.lat, lon: com.lon, risks: riskData });
+      // Render Env met GPU data!
+      renderEnv({ insee: com.insee, risks: riskData, gpu: gpuData });
       
-      renderPriceCompare({
-        price: Number.isFinite(price) ? price : NaN,
-        surface: Number.isFinite(surface) ? surface : NaN,
-        dvfMedian: Number.isFinite(dvfMedian) ? dvfMedian : NaN
-      });
+      renderPriceCompare({ price, surface, dvfMedian });
+
+      // Activeer de knoppen
+      setupContactButtons({ city: com.name, postcode: postcode, price: price });
 
       setSpinner(false, 'Klaar.');
-      reveal(resultCard);
-      reveal(contactCard);
-      reveal(btnExport);
+      if(byId('result')) byId('result').hidden = false;
+      if(byId('contact')) byId('contact').hidden = false;
+      if(btnExport) btnExport.hidden = false;
+      if(btnCancel) btnCancel.hidden = true;
+
     } catch (err) {
       if (err.name === 'AbortError') return;
       setSpinner(false, 'Fout.');
-      addLog(`❌ ${err.message || err}`);
+      addLog(`❌ ${err.message}`);
       setStep('commune', 'error');
     } finally {
       aborter = null;
     }
   };
 
-  const onCancel = () => {
-    if (aborter) aborter.abort('user-cancel');
-    setSpinner(false, 'Afgebroken.');
-    addLog('⏹ Afgebroken.');
-    aborter = null;
-  };
+  const onCancel = () => { if (aborter) aborter.abort(); setSpinner(false, 'Afgebroken.'); };
   const onExport = () => window.print();
 
-  // ---------- Wire up ----------
   if (btnGenerate) btnGenerate.addEventListener('click', onGenerate);
   if (btnCancel) btnCancel.addEventListener('click', onCancel);
   if (btnExport) btnExport.addEventListener('click', onExport);
-
-  // Init
-  setSpinner(false, 'Wachten op start…');
 })();
