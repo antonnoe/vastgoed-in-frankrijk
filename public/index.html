@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Immodiagnostique - Infofrankrijk.com</title>
   <link rel="stylesheet" href="style.css">
-  <link rel="icon" href="favicon.ico" type="image/x-icon">
+  <link rel="icon" href="data:;base64,iVBORw0KGgo=">
 </head>
 <body>
 
@@ -61,7 +61,7 @@
 
         <div class="form-group full-width">
           <label for="ad-text">Advertentietekst (optioneel)</label>
-          <textarea id="ad-text" rows="4" placeholder="Plak hier de volledige omschrijving... Tip: klik eerst op 'Lees meer' in de advertentie."></textarea>
+          <textarea id="ad-text" rows="5" placeholder="Plak hier de volledige omschrijving... (Mag in Frans, Engels of Nederlands)"></textarea>
         </div>
       </div>
 
@@ -120,8 +120,10 @@
       
       <section class="card result-card">
         <div class="card-header-actions">
-          <h2>Diagnose</h2>
-          <button id="btn-export" class="btn btn-sm">🖨️ Print / PDF</button>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+             <h2>Diagnose</h2>
+             <button id="btn-export" class="btn btn-sm btn-secondary">🖨️ Print / PDF</button>
+          </div>
         </div>
 
         <div class="diagnosis-block">
@@ -134,7 +136,11 @@
 
         <div class="diagnosis-block">
           <h3>2. Omgevingsdossier</h3>
+          
+          <div id="location-profile" class="location-box" hidden></div>
+
           <div id="env-badges" class="badges-row"></div>
+          
           <div id="env-links" class="links-row"></div>
         </div>
 
@@ -192,22 +198,22 @@
           <div class="contact-role">
             <h4>Notaris</h4>
             <div class="contact-options">
-               <button disabled>E-mail</button>
-               <button disabled>Telefoon</button>
+               <button>E-mail</button>
+               <button>Telefoon</button>
             </div>
           </div>
           <div class="contact-role">
             <h4>Makelaar</h4>
              <div class="contact-options">
-               <button disabled>E-mail</button>
-               <button disabled>Telefoon</button>
+               <button>E-mail</button>
+               <button>Telefoon</button>
             </div>
           </div>
           <div class="contact-role">
             <h4>Verkoper</h4>
              <div class="contact-options">
-               <button disabled>E-mail</button>
-               <button disabled>Telefoon</button>
+               <button>E-mail</button>
+               <button>Telefoon</button>
             </div>
           </div>
         </div>
