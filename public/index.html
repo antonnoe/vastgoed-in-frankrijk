@@ -22,8 +22,8 @@
       <div class="intro-box">
         <h2>Start de Analyse</h2>
         <p>
-          Dit systeem activeert directe koppelingen met <strong>5 Franse overheidsdatabases</strong> (IGN, Géorisques, DVF, Insee, Apicarto). 
-          Wij kruisverwijzen kadastrale data, risicokaarten en marktwaarde met een AI-analyse van de advertentie.
+          Dit systeem activeert directe koppelingen met <strong>5 Franse overheidsdatabases</strong>. 
+          Vul het adres in om de exacte kadastrale data, risicokaarten en marktwaarde op te halen.
         </p>
       </div>
 
@@ -33,16 +33,20 @@
           <input type="url" id="advert-link" placeholder="https://www.leboncoin.fr/..." />
         </div>
 
-        <div class="form-group">
-          <label for="city">Plaatsnaam * <small>(Noodzakelijk voor database-connectie)</small></label>
-          <input type="text" id="city" placeholder="Bijv. Fontaine-Étoupefour" required />
-        </div>
-        <div class="form-group">
-          <label for="postcode">Postcode</label>
-          <input type="text" id="postcode" placeholder="14790" />
+        <div class="form-group full-width">
+          <label for="global-address">Zoek Adres of Plaatsnaam *</label>
+          <div class="autocomplete-wrapper">
+            <input type="text" id="global-address" placeholder="Begin met typen (bijv. 12 Rue de la Paix...)" autocomplete="off" />
+            <ul id="address-suggestions"></ul>
+          </div>
+          <small>Selecteer uit de lijst voor exacte GPS-precisie.</small>
         </div>
 
-        <div class="form-group">
+        <input type="hidden" id="city">
+        <input type="hidden" id="postcode">
+        <input type="hidden" id="street">
+        <input type="hidden" id="housenr">
+        <input type="hidden" id="lat"> <input type="hidden" id="lon"> <div class="form-group">
           <label for="price">Vraagprijs (€)</label>
           <input type="number" id="price" placeholder="460000" />
         </div>
@@ -51,24 +55,15 @@
           <input type="number" id="surface" placeholder="154" />
         </div>
 
-        <div class="form-group">
-          <label for="street">Straatnaam</label>
-          <input type="text" id="street" placeholder="" />
-        </div>
-        <div class="form-group">
-          <label for="housenr">Huisnummer</label>
-          <input type="text" id="housenr" placeholder="" />
-        </div>
-
         <div class="form-group full-width">
           <label for="ad-text">Advertentietekst (Bron voor AI)</label>
           <textarea id="ad-text" rows="8" placeholder="Instructie voor het beste resultaat:
 
-1. Klik op de advertentiesite op 'Lees meer' / 'Voir plus' (zodat alle tekst zichtbaar is).
-2. Druk op Ctrl+A (Alles selecteren) en daarna Ctrl+C (Kopiëren).
-3. Klik hier en druk op Ctrl+V (Plakken).
+1. Klik op de advertentiesite op 'Lees meer' / 'Voir plus'.
+2. Druk op Ctrl+A (Alles) en Ctrl+C (Kopieer).
+3. Plak (Ctrl+V) de hele pagina hier.
 
-Ons systeem filtert automatisch de navigatie, cookies en reclame eruit!"></textarea>
+Ons systeem filtert automatisch de rommel eruit!"></textarea>
         </div>
       </div>
 
@@ -81,7 +76,6 @@ Ons systeem filtert automatisch de navigatie, cookies en reclame eruit!"></texta
     <section id="progress-section" class="card">
       <div class="progress-header">
         <h3>Systeem Status</h3>
-        
         <div class="system-status-box">
           <div id="radar" class="radar-scanner" style="visibility: hidden;"></div>
           <div class="spinner-box">
@@ -135,7 +129,6 @@ Ons systeem filtert automatisch de navigatie, cookies en reclame eruit!"></texta
     </section>
 
     <div id="result" hidden>
-      
       <section class="card result-card">
         <div class="card-header-actions">
           <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
@@ -148,100 +141,52 @@ Ons systeem filtert automatisch de navigatie, cookies en reclame eruit!"></texta
           <h3>1. Vastgoeddossier</h3>
           <div id="keyfacts" class="keyfacts-grid"></div>
         </div>
-
         <hr>
-
         <div class="diagnosis-block">
           <h3>2. Omgevingsdossier</h3>
-          
           <div id="location-profile" class="location-box" hidden></div>
-
           <div id="env-badges" class="badges-row"></div>
-          
           <div id="env-links" class="links-row"></div>
         </div>
-
         <hr>
-
         <div class="diagnosis-block">
           <h3>3. Strategisch Actieplan</h3>
           <ul id="actieplan-list" class="check-list"></ul>
         </div>
-
         <hr>
-
         <div class="diagnosis-block">
           <h3>4. Marktwaarde Check (DVF)</h3>
           <div id="price-compare" class="price-compare-box"></div>
         </div>
-
         <hr>
-
         <div class="diagnosis-block swot-section">
           <h3>Bijlage A: SWOT Analyse</h3>
           <div id="swot-container" class="swot-grid">
-            <div class="swot-column">
-              <h4 class="swot-title positive">Sterke punten</h4>
-              <ul id="list-sterke-punten"></ul>
-            </div>
-            <div class="swot-column">
-              <h4 class="swot-title negative">Mogelijke zorgpunten</h4>
-              <ul id="list-mogelijke-zorgpunten"></ul>
-            </div>
-            <div class="swot-column">
-              <h4 class="swot-title opportunity">Mogelijke kansen</h4>
-              <ul id="list-mogelijke-kansen"></ul>
-            </div>
-            <div class="swot-column">
-              <h4 class="swot-title threat">Mogelijke bedreigingen</h4>
-              <ul id="list-mogelijke-bedreigingen"></ul>
-            </div>
+            <div class="swot-column"><h4 class="swot-title positive">Sterke punten</h4><ul id="list-sterke-punten"></ul></div>
+            <div class="swot-column"><h4 class="swot-title negative">Mogelijke zorgpunten</h4><ul id="list-mogelijke-zorgpunten"></ul></div>
+            <div class="swot-column"><h4 class="swot-title opportunity">Mogelijke kansen</h4><ul id="list-mogelijke-kansen"></ul></div>
+            <div class="swot-column"><h4 class="swot-title threat">Mogelijke bedreigingen</h4><ul id="list-mogelijke-bedreigingen"></ul></div>
           </div>
         </div>
-
         <div class="disclaimer-box">
-          <p><strong>Disclaimer:</strong> Deze analyse is geautomatiseerd. Raadpleeg notaris, makelaar en officiële bronnen (Géorisques, DVF, Géoportail-Urbanisme) voor definitieve verificatie.</p>
+          <p><strong>Disclaimer:</strong> Deze analyse is geautomatiseerd. Raadpleeg notaris, makelaar en officiële bronnen voor definitieve verificatie.</p>
         </div>
-
       </section>
 
       <section id="contact" class="card contact-card" hidden>
         <h3>Direct Actie Ondernemen</h3>
         <p>Selecteer een ontvanger om direct een concept-bericht te openen.</p>
-        
         <div class="contact-grid">
-          <div class="contact-role">
-            <h4>Notaris</h4>
-            <div class="contact-options">
-               <button>✉️ E-mail opstellen</button>
-               <button>📞 Bellen</button>
-            </div>
-          </div>
-          <div class="contact-role">
-            <h4>Makelaar</h4>
-             <div class="contact-options">
-               <button>✉️ E-mail opstellen</button>
-               <button>📞 Bellen</button>
-            </div>
-          </div>
-          <div class="contact-role">
-            <h4>Verkoper</h4>
-             <div class="contact-options">
-               <button>✉️ E-mail opstellen</button>
-               <button>📞 Bellen</button>
-            </div>
-          </div>
+          <div class="contact-role"><h4>Notaris</h4><div class="contact-options"><button>✉️ E-mail</button><button>📞 Bellen</button></div></div>
+          <div class="contact-role"><h4>Makelaar</h4><div class="contact-options"><button>✉️ E-mail</button><button>📞 Bellen</button></div></div>
+          <div class="contact-role"><h4>Verkoper</h4><div class="contact-options"><button>✉️ E-mail</button><button>📞 Bellen</button></div></div>
         </div>
       </section>
-
     </div>
-
   </main>
 
   <footer class="main-footer">
-    <div class="container">
-      <p>&copy; 2025 Infofrankrijk.com - Immodiagnostique Engine</p>
-    </div>
+    <div class="container"><p>&copy; 2025 Infofrankrijk.com - Immodiagnostique Engine</p></div>
   </footer>
 
   <script src="script.js"></script>
