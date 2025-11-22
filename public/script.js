@@ -1,7 +1,7 @@
-// /public/script.js  v: final-engine-v9
+// /public/script.js  v: final-fixed-links
 
 (() => {
-  console.log('Immodiagnostique Engine V9 Loaded');
+  console.log('Immodiagnostique Engine V10 (Links Fixed) Loaded');
 
   const byId = (id) => document.getElementById(id);
   const $ = (sel) => document.querySelector(sel);
@@ -152,7 +152,7 @@
         ['Perceel', cPlot ? m2(cPlot) : 'Niet in tekst'],
         ['Gemeente', communeInfo?.name],
         ['INSEE', communeInfo?.insee],
-        ['DVF Status', communeInfo?.dvf_note]
+        ['DVF Bron', communeInfo?.dvf_note]
       ].filter(r => r[1]);
 
       facts.forEach(([k, v]) => {
@@ -166,13 +166,14 @@
   };
 
   const renderEnv = ({ insee, risks, gpu, matchType }) => {
+    // 1. Badges
     if (envBadges) {
       let html = '';
       const mapRisk = (key, label) => {
         const val = risks ? risks[key] : null;
         if (val === true) return `<span class="badge badge-danger">⚠️ ${label}</span>`;
         if (val === false) return `<span class="badge badge-success">✓ ${label}</span>`;
-        return `<span class="badge">— ${label}</span>`;
+        return `<span class="badge" style="opacity:0.6">— ${label}</span>`;
       };
       html += mapRisk('flood', 'Overstroming');
       html += mapRisk('argile', 'Klei/krimp');
@@ -194,14 +195,18 @@
       }
       envBadges.innerHTML = html;
     }
-    if (envLinks) {
-      const gpul = insee ? `https://www.geoportail-urbanisme.gouv.fr/recherche?insee=${insee}` : null;
-      const grl  = insee ? `https://www.georisques.gouv.fr/commune/${insee}` : null;
-      const dvf  = `https://app.dvf.etalab.gouv.fr/`;
+
+    // 2. Externe Links (GECORRIGEERD)
+    if (envLinks && insee) {
+      const urlGPU = `https://www.geoportail-urbanisme.gouv.fr/recherche?insee=${insee}`;
+      const urlGeo = `https://www.georisques.gouv.fr/commune/${insee}`;
+      // Explore.data.gouv.fr is een moderne, werkende visualisatie voor DVF per gemeente
+      const urlDVF = `https://explore.data.gouv.fr/fr/immobilier?code_commune=${insee}`;
+
       envLinks.innerHTML = `
-        ${gpul ? `<a href="${gpul}" target="_blank" rel="noopener">Géoportail Urbanisme</a>` : ''}
-        ${grl ? `<a href="${grl}" target="_blank" rel="noopener">Géorisques – gemeente</a>` : ''}
-        <a href="${dvf}" target="_blank" rel="noopener">DVF – Etalab</a>
+        <a href="${urlGPU}" target="_blank" rel="noopener" class="ext-link">🌍 Géoportail</a>
+        <a href="${urlGeo}" target="_blank" rel="noopener" class="ext-link">⚠️ Géorisques</a>
+        <a href="${urlDVF}" target="_blank" rel="noopener" class="ext-link">💰 DVF Transacties</a>
       `;
     }
   };
@@ -240,7 +245,7 @@
     priceCmpBox.innerHTML = '';
     
     if (!p || !s) {
-      priceCmpBox.innerHTML = '<div class="pc-row pc-note">Prijzen worden geanalyseerd (data ontbreekt)...</div>';
+      priceCmpBox.innerHTML = '<div class="pc-row pc-note">Wacht op prijs/m² data...</div>';
       return;
     }
     
@@ -282,7 +287,6 @@
 
   // --- MAIN FLOW ---
   let aborter = null;
-  // Global state voor de rekensom
   let currentPrice = 0, currentSurface = 0, currentPlot = 0, currentMedian = 0;
 
   const onGenerate = async () => {
@@ -305,11 +309,10 @@
     const adText = byId('ad-text')?.value?.trim() || '';
     const advertLink = byId('advert-link')?.value?.trim() || '';
 
-    // GPS
+    // GPS (Goudmijn voor GPU)
     const lat = hLat.value;
     const lon = hLon.value;
 
-    // Init state
     currentPrice = inputPrice || 0;
     currentSurface = inputSurface || 0;
     currentPlot = 0;
@@ -324,7 +327,7 @@
     aborter = new AbortController();
 
     try {
-      // 1. Commune
+      // 1. Commune (Startmotor)
       setStep('commune', 'active');
       addLog('Verbinding Insee database…');
       let cUrl = `/api/commune?city=${encodeURIComponent(city)}`;
@@ -338,24 +341,23 @@
          com.lat = lat; com.lon = lon;
          addLog(`✔ Exact adres gelokaliseerd (${lat}, ${lon})`);
       } else {
-         addLog('⚠ Geen exact huisnummer, gebruik gemeentecentrum.');
+         addLog('⚠ Gebruik gemeentecentrum (geen exact adres).');
       }
-      
       setStep('commune', 'done', `${com.name} (${com.insee})`);
 
-      // 2. DVF (Waardering)
+      // 2. DVF (Waardering Expert Mode)
       setStep('dvf', 'active');
       addLog('Ophalen historische marktprijzen (Cquest)…');
       
-      // Stuur surface mee indien bekend (voor P10/P90)
       let dvfUrl = `/api/dvf?insee=${com.insee}`;
+      // Als we al een surface hebben, stuur mee voor P10/P90
       if (currentSurface > 0) dvfUrl += `&surface=${currentSurface}`;
 
       const DVF = await getJSON(dvfUrl, { signal: aborter.signal });
       
       currentMedian = (DVF?.summary?.median_eur_m2) ? Number(DVF.summary.median_eur_m2) : 0;
       
-      // Log waardering als beschikbaar
+      // Log waardering in de console (visuele feedback)
       if (DVF?.valuation) {
          const low = DVF.valuation.range_low.toLocaleString();
          const high = DVF.valuation.range_high.toLocaleString();
@@ -376,7 +378,7 @@
         addLog('✔ Risico-analyse voltooid');
       } catch (e) { setStep('georisques', 'error'); }
 
-      // 4. GPU
+      // 4. GPU (Zonering)
       setStep('gpu', 'active');
       addLog('Raadplegen bestemmingsplannen (IGN)…');
       let gpuData = [];
@@ -396,7 +398,7 @@
         addLog('✔ Zonering vastgesteld');
       } catch (e) { setStep('gpu', 'error'); }
 
-      // 5. AI
+      // 5. AI Analyse
       setStep('ai', 'active', 'Gemini');
       addLog('Starten neurale analyse advertentie…');
       
@@ -411,7 +413,7 @@
 
       const signals = {
         price: currentPrice,
-        dvf: { median_price: currentMedian },
+        dvf: { median_price: currentMedian, comparables: DVF?.comparables || [] }, // Stuur DVF-comps mee!
         georisques: riskData,
         gpu: gpuData,
         gpuMatch: gpuMatch,
@@ -430,17 +432,28 @@
          addLog('✔ Rapport gegenereerd');
          const out = AI.output;
          
-         // AUTO FILL door AI
+         // --- AUTO FILL LOGIC ---
+         // Als AI cijfers vindt, en we hebben ze nog niet, gebruik ze!
+         let recalcNeeded = false;
+         
          if (out.extracted) {
             if (!currentPrice && out.extracted.price) {
                 currentPrice = out.extracted.price;
                 addLog(`💡 AI vond prijs: €${currentPrice}`);
+                recalcNeeded = true;
             }
             if (!currentSurface && out.extracted.surface) {
                 currentSurface = out.extracted.surface;
                 addLog(`💡 AI vond woonopp.: ${currentSurface}m²`);
+                recalcNeeded = true;
             }
             if (out.extracted.plot) currentPlot = out.extracted.plot;
+         }
+         
+         // Als we nieuwe meters hebben, herbereken de DVF-vergelijking als die nog niet gedaan was
+         if (recalcNeeded && currentSurface > 0 && !DVF?.valuation) {
+             // Dit is een 'nice to have': nog een keer DVF roepen met de juiste m2
+             // Voor snelheid slaan we dit over en doen we de simpele berekening in renderPriceCompare
          }
          
          renderActieplan(out.actieplan);
@@ -449,14 +462,28 @@
             locationProfileBox.textContent = out.locatie_profiel || '';
             locationProfileBox.hidden = !out.locatie_profiel;
          }
+         
+         // Toon Expert Waardering Tekst (als beschikbaar)
+         if (out.valuation_report && byId('price-compare')) {
+             const reportDiv = document.createElement('div');
+             reportDiv.style.marginTop = '15px';
+             reportDiv.style.padding = '10px';
+             reportDiv.style.backgroundColor = '#fffbe6';
+             reportDiv.style.borderLeft = '4px solid #ffe58f';
+             reportDiv.style.fontSize = '0.9rem';
+             reportDiv.style.whiteSpace = 'pre-line';
+             reportDiv.textContent = out.valuation_report;
+             byId('price-compare').appendChild(reportDiv);
+         }
+
       } else {
          throw new Error(AI?.error || 'AI mislukt');
       }
 
-      // FINAL RENDER (Met de mogelijk geupdate prijs/meters)
+      // FINAL RENDER
       refreshResults(
         { city: com.name, postcode: hPostcode.value || com.zip, street: hStreet.value, housenr: hHousenr.value }, 
-        { name: com.name, insee: com.insee, dvf_note: DVF?.source === 'commune' ? 'Gemeente-data' : 'Fallback' },
+        { name: com.name, insee: com.insee, dvf_note: DVF?.source === 'cquest' ? 'Cquest Data' : 'Fallback' },
         currentPrice, currentSurface, currentPlot
       );
       
