@@ -286,3 +286,21 @@ hr { border: 0; border-top: 1px solid #eee; margin: 2.5rem 0; }
   border-left: 5px solid #ffecb3;
   margin-top: 3rem; font-size: 0.9rem;
 }
+/* Fix voor de externe linkjes */
+.ext-link {
+  display: inline-block;
+  margin-right: 15px;
+  margin-top: 5px;
+  padding: 5px 10px;
+  background: white;
+  border: 1px solid #eee;
+  border-radius: 4px;
+  text-decoration: none;
+  font-weight: 600;
+  color: var(--primary);
+  transition: all 0.2s;
+}
+.ext-link:hover {
+  background: #f1f8ff;
+  border-color: var(--primary);
+}
