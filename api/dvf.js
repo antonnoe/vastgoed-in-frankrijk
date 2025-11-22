@@ -1,102 +1,91 @@
-// /api/dvf.js
-// Bron: Cquest Mirror
-// Functie: Geavanceerde waardering (P10/Median/P90) op basis van vergelijkbare panden.
-
-const cache = new Map();
+// /api/analyse.js
+// V7: Expert Valuation Mode
 
 export default async function handler(req, res) {
-  const { insee, surface } = req.query;
-  const targetSurface = Number(surface) || 0;
+  if (req.method !== 'POST') return res.status(405).json({ ok: false });
+  const { dossier, signals } = req.body || {};
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-  if (!insee || insee.length < 5) {
-    return res.status(400).json({ ok: false, error: 'INSEE onjuist' });
-  }
+  // Prompt bouwen
+  const prompt = buildExpertPrompt(dossier, signals);
 
   try {
-    // 1. Caching & Fetching (Departement niveau)
-    const dep = insee.substring(0, 2);
-    let features = [];
-
-    if (cache.has(dep)) {
-      features = cache.get(dep);
-    } else {
-      console.log(`Fetching Cquest DVF voor ${dep}...`);
-      const url = `https://data.cquest.org/dvf/latest/geojson/${dep}.geojson`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      
-      const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeout);
-
-      if (!response.ok) throw new Error(`Cquest status ${response.status}`);
-      const data = await response.json();
-      features = data.features || [];
-      cache.set(dep, features);
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    });
+    const data = await response.json();
+    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    
+    // Parse JSON
+    let output = null;
+    try {
+       output = JSON.parse(rawText.replace(/```json|```/g, '').trim());
+    } catch(e) {
+       // Fallback als JSON faalt
+       output = { 
+         locatie_profiel: "Analyse technisch niet leesbaar.", 
+         swot: { sterke_punten: ["Zie ruwe tekst"] },
+         valuation_report: "Kon geen waardering genereren."
+       };
     }
 
-    // 2. Basis Filter: Gemeente + Huizen (Maison) + Normale prijzen
-    let transactions = features.filter(f => 
-      f.properties.code_commune === insee &&
-      f.properties.type_local === 'Maison' &&
-      f.properties.valeur_fonciere > 10000 &&
-      f.properties.surface_reelle_bati > 10
-    );
+    return res.status(200).json({ ok: true, output });
 
-    if (transactions.length === 0) {
-      return res.status(200).json({ ok: true, source: 'none', summary: {} });
-    }
-
-    // 3. Slimme Filter: Vergelijkbare Oppervlakte (indien opgegeven)
-    // We zoeken huizen die +/- 40% zo groot zijn als het doel
-    let comps = transactions;
-    if (targetSurface > 0) {
-      const rangeMin = targetSurface * 0.6;
-      const rangeMax = targetSurface * 1.4;
-      const filtered = transactions.filter(f => {
-        const s = f.properties.surface_reelle_bati;
-        return s >= rangeMin && s <= rangeMax;
-      });
-      // Alleen gebruiken als we genoeg vergelijkingsmateriaal overhouden (>3)
-      if (filtered.length >= 3) {
-        comps = filtered;
-      }
-    }
-
-    // 4. Statistieken Berekenen (P10, Mediaan, P90)
-    const pricesPerM2 = comps.map(f => {
-      return f.properties.valeur_fonciere / f.properties.surface_reelle_bati;
-    }).sort((a, b) => a - b);
-
-    const count = pricesPerM2.length;
-    const median = pricesPerM2[Math.floor(count / 2)];
-    const p10 = pricesPerM2[Math.floor(count * 0.10)] || median; // Fallback
-    const p90 = pricesPerM2[Math.floor(count * 0.90)] || median;
-
-    // 5. Waardering opstellen
-    const summary = {
-      median_eur_m2: Math.round(median),
-      count: transactions.length, // Totaal in gemeente
-      comps_count: comps.length,  // Aantal gebruikt voor deze berekening
-      price_range: {
-        low: Math.round(p10),
-        high: Math.round(p90)
-      }
-    };
-
-    // Als er een oppervlakte is, geef dan ook de totale waarde-schatting
-    let valuation = null;
-    if (targetSurface > 0) {
-      valuation = {
-        fair_value: Math.round(median * targetSurface),
-        range_low: Math.round(p10 * targetSurface),
-        range_high: Math.round(p90 * targetSurface)
-      };
-    }
-
-    return res.status(200).json({ ok: true, source: 'cquest', summary, valuation });
-
-  } catch (error) {
-    console.error('DVF Error:', error.message);
-    return res.status(200).json({ ok: true, source: 'error', summary: {} });
+  } catch (e) {
+    return res.status(500).json({ ok: false });
   }
+}
+
+function buildExpertPrompt(dossier, signals) {
+  // Format DVF data voor de AI
+  let dvfContext = "Geen DVF transacties gevonden in de directe omgeving.";
+  if (signals?.dvf?.comparables && signals.dvf.comparables.length > 0) {
+    const list = signals.dvf.comparables.map(c => 
+      `- ${c.date}: ${c.surface}m² voor €${c.price} (€${c.m2_price}/m²)`
+    ).join('\n');
+    dvfContext = `Recente verkopen in de gemeente (Referentie):\n${list}`;
+  }
+
+  const priceInfo = signals?.price ? `Vraagprijs Huidige Woning: €${signals.price}` : "Vraagprijs onbekend";
+
+  return `
+    Je bent een Elite Vastgoed Taxateur in Frankrijk.
+    
+    INPUT DATA:
+    ${priceInfo}
+    ${dvfContext}
+    
+    ADVERTENTIE TEKST:
+    "${dossier}"
+
+    OPDRACHT:
+    Genereer een JSON object met een diepgaande analyse. 
+    
+    1. LOCATIE & SFEER: Een wervende maar eerlijke beschrijving van de locatie.
+    2. SWOT: De klassieke analyse (max 5 punten per categorie).
+    3. WAARDERINGSRAPPORT (valuation_report): 
+       Schrijf een tekstuele analyse zoals een expert dat doet.
+       - Vergelijk de vraagprijs/m2 met de referentie verkopen.
+       - Pas correcties toe (bijv: "Duurder dan gemiddeld, maar gerechtvaardigd door recente renovatie/warmtepomp" of "Te duur gezien energielabel G").
+       - Geef een conclusie: "Marktconform", "Aan de hoge kant", of "Scherp geprijsd".
+       - Geef advies voor het openingsbod.
+
+    Taal: NEDERLANDS.
+
+    Verwacht JSON formaat:
+    {
+      "locatie_profiel": "...",
+      "swot": {
+        "sterke_punten": [],
+        "mogelijke_zorgpunten": [],
+        "mogelijke_kansen": [],
+        "mogelijke_bedreigingen": []
+      },
+      "valuation_report": "Hier jouw expert tekst (gebruik enters/newlines voor leesbaarheid)...",
+      "actieplan": [],
+      "extracted": { "price": 0, "surface": 0, "plot": 0 } 
+    }
+  `;
 }
