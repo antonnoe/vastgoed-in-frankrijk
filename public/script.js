@@ -1,7 +1,7 @@
-// /public/script.js  v: autocomplete-v8-engine
+// /public/script.js  v: final-engine-v9
 
 (() => {
-  console.log('Immodiagnostique V8 (Autocomplete) Loaded');
+  console.log('Immodiagnostique Engine V9 Loaded');
 
   const byId = (id) => document.getElementById(id);
   const $ = (sel) => document.querySelector(sel);
@@ -12,13 +12,15 @@
   const spinnerLabel = byId('spinner-label');
   const pipeline = byId('progress-pipeline');
   const logBox = byId('progress-log');
+  
   const btnGenerate = byId('btn-generate');
   const btnCancel = byId('btn-cancel');
   const btnExport = byId('btn-export');
+
   const resultCard = byId('result');
   const contactCard = byId('contact');
   
-  // Results
+  // Result containers
   const keyfactsBox = byId('keyfacts');
   const envBadges = byId('env-badges');
   const envLinks = byId('env-links');
@@ -26,7 +28,7 @@
   const priceCmpBox = byId('price-compare');
   const locationProfileBox = byId('location-profile');
 
-  // Hidden fields
+  // Hidden fields (gevuld door Autocomplete)
   const hCity = byId('city');
   const hPostcode = byId('postcode');
   const hStreet = byId('street');
@@ -46,39 +48,32 @@
             return;
         }
         try {
-            // Roep de Franse adres API aan
             const r = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=5`);
             const data = await r.json();
             
             suggestions.innerHTML = "";
             data.features.forEach(f => {
                 const li = document.createElement("li");
-                // Label = bijv "12 Rue de la Paix 75002 Paris"
                 li.textContent = f.properties.label;
-                
                 li.addEventListener("click", () => {
-                    // Vul zichtbare balk
+                    // Vul zichtbaar veld
                     addressInput.value = f.properties.label;
                     suggestions.innerHTML = "";
                     
-                    // Vul VERBORGEN velden (De motorbrandstof)
+                    // Vul verborgen velden
                     hCity.value = f.properties.city;
                     hPostcode.value = f.properties.postcode;
                     hStreet.value = f.properties.street || '';
                     hHousenr.value = f.properties.housenumber || '';
-                    hLat.value = f.geometry.coordinates[1]; // let op volgorde api
+                    hLat.value = f.geometry.coordinates[1]; 
                     hLon.value = f.geometry.coordinates[0];
-                    
-                    console.log("Adres geselecteerd:", f.properties.label, "Coords:", hLat.value, hLon.value);
                 });
                 suggestions.appendChild(li);
             });
-        } catch (e) {
-            console.error("Autocomplete error", e);
-        }
+        } catch (e) { console.error("Autocomplete error", e); }
     });
 
-    // Klik buiten sluit lijst
+    // Sluit lijst bij klik buiten
     document.addEventListener('click', (e) => {
         if (!addressInput.contains(e.target) && !suggestions.contains(e.target)) {
             suggestions.innerHTML = "";
@@ -94,6 +89,7 @@
 
   const setSpinner = (on, label) => {
     if (spinner) spinner.style.visibility = on ? 'visible' : 'hidden';
+    // Radar animatie
     const radar = byId('radar');
     if (radar) radar.style.visibility = on ? 'visible' : 'hidden';
     if (spinnerLabel) spinnerLabel.textContent = label || (on ? 'SYSTEEM ACTIEF…' : 'Gereed.');
@@ -146,15 +142,14 @@
   const euro = (n) => Number.isFinite(n) ? n.toLocaleString('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }) : '—';
   const m2 = (n) => Number.isFinite(n) ? `${n.toLocaleString('nl-NL', { maximumFractionDigits: 0 })} m²` : '—';
 
-  const refreshResults = (addressInfo, communeInfo, currentPrice, currentSurface, currentPlot) => {
-    // Keyfacts
+  const refreshResults = (addressInfo, communeInfo, cPrice, cSurface, cPlot) => {
     if (keyfactsBox) {
       keyfactsBox.innerHTML = '';
       const facts = [
         ['Gekozen Adres', addressInput.value || [addressInfo.postcode, addressInfo.city].join(' ')],
-        ['Vraagprijs', currentPrice ? `${euro(currentPrice)}` : 'Niet gevonden'],
-        ['Woonoppervlakte', currentSurface ? m2(currentSurface) : 'Niet gevonden'],
-        ['Perceel', currentPlot ? m2(currentPlot) : 'Niet in tekst'],
+        ['Vraagprijs', cPrice ? `${euro(cPrice)}` : 'Niet gevonden'],
+        ['Woonoppervlakte', cSurface ? m2(cSurface) : 'Niet gevonden'],
+        ['Perceel', cPlot ? m2(cPlot) : 'Niet in tekst'],
         ['Gemeente', communeInfo?.name],
         ['INSEE', communeInfo?.insee],
         ['DVF Status', communeInfo?.dvf_note]
@@ -167,7 +162,7 @@
         keyfactsBox.appendChild(row);
       });
     }
-    setupContactButtons(addressInfo, currentPrice);
+    setupContactButtons(addressInfo, cPrice);
   };
 
   const renderEnv = ({ insee, risks, gpu, matchType }) => {
@@ -243,12 +238,15 @@
   const renderPriceCompare = (p, s, m) => {
     if (!priceCmpBox) return;
     priceCmpBox.innerHTML = '';
+    
     if (!p || !s) {
-      priceCmpBox.innerHTML = '<div class="pc-row pc-note">Prijzen worden geanalyseerd...</div>';
+      priceCmpBox.innerHTML = '<div class="pc-row pc-note">Prijzen worden geanalyseerd (data ontbreekt)...</div>';
       return;
     }
+    
     const askPerM2 = Math.round(p / s);
     let html = `<div class="pc-row"><span class="k">Vraagprijs per m²:</span> <span class="v">${euro(askPerM2)}/m²</span></div>`;
+    
     if (m) {
       const deltaPct = ((askPerM2 - m) / m) * 100;
       const dir = deltaPct >= 0 ? 'boven' : 'onder';
@@ -256,7 +254,7 @@
       html += `<div class="pc-row"><span class="k">DVF mediaan (gemeente):</span> <span class="v">${euro(m)}/m²</span></div>`;
       html += `<div class="pc-row"><span class="k">Indicatie:</span> <span class="v" style="color:${color}; font-weight:bold;">${dir} mediaan (${Math.abs(deltaPct).toFixed(0)}%)</span></div>`;
     } else {
-      html += '<div class="pc-row pc-note">Geen DVF-mediaan op gemeenteniveau.</div>';
+      html += '<div class="pc-row pc-note">Geen DVF-mediaan op gemeenteniveau beschikbaar.</div>';
     }
     priceCmpBox.innerHTML = html;
   };
@@ -284,6 +282,7 @@
 
   // --- MAIN FLOW ---
   let aborter = null;
+  // Global state voor de rekensom
   let currentPrice = 0, currentSurface = 0, currentPlot = 0, currentMedian = 0;
 
   const onGenerate = async () => {
@@ -296,23 +295,21 @@
     if(btnCancel) btnCancel.hidden = false;
     if(btnExport) btnExport.hidden = true;
 
-    // Haal data uit HIDDEN fields (gevuld door Autocomplete)
+    // Inputs
     let city = hCity.value || '';
     let postcode = hPostcode.value || '';
-    // Als hidden leeg is, check of er toch iets in de zoekbalk staat (voor het geval men niet klikte)
-    if (!city && addressInput.value.length > 2) {
-       city = addressInput.value; // Fallback, minder nauwkeurig
-    }
+    if (!city && addressInput.value.length > 2) city = addressInput.value;
 
     const inputPrice = Number(byId('price')?.value);
     const inputSurface = Number(byId('surface')?.value);
     const adText = byId('ad-text')?.value?.trim() || '';
     const advertLink = byId('advert-link')?.value?.trim() || '';
 
-    // Coördinaten van Autocomplete (Rolls Royce feature!)
+    // GPS
     const lat = hLat.value;
     const lon = hLon.value;
 
+    // Init state
     currentPrice = inputPrice || 0;
     currentSurface = inputSurface || 0;
     currentPlot = 0;
@@ -337,10 +334,8 @@
       if (!C?.ok || !C?.commune?.insee) throw new Error('Gemeente niet gevonden.');
       const com = C.commune;
       
-      // Als we coördinaten hebben van de autocomplete, gebruik DIE. Anders die van het centrum van de gemeente.
       if (lat && lon) {
-         com.lat = lat;
-         com.lon = lon;
+         com.lat = lat; com.lon = lon;
          addLog(`✔ Exact adres gelokaliseerd (${lat}, ${lon})`);
       } else {
          addLog('⚠ Geen exact huisnummer, gebruik gemeentecentrum.');
@@ -348,11 +343,25 @@
       
       setStep('commune', 'done', `${com.name} (${com.insee})`);
 
-      // 2. DVF
+      // 2. DVF (Waardering)
       setStep('dvf', 'active');
-      addLog('Ophalen historische marktprijzen…');
-      const DVF = await getJSON(`/api/dvf?insee=${com.insee}`, { signal: aborter.signal });
-      currentMedian = (DVF?.source === 'commune' && DVF.summary?.median_eur_m2) ? Number(DVF.summary.median_eur_m2) : 0;
+      addLog('Ophalen historische marktprijzen (Cquest)…');
+      
+      // Stuur surface mee indien bekend (voor P10/P90)
+      let dvfUrl = `/api/dvf?insee=${com.insee}`;
+      if (currentSurface > 0) dvfUrl += `&surface=${currentSurface}`;
+
+      const DVF = await getJSON(dvfUrl, { signal: aborter.signal });
+      
+      currentMedian = (DVF?.summary?.median_eur_m2) ? Number(DVF.summary.median_eur_m2) : 0;
+      
+      // Log waardering als beschikbaar
+      if (DVF?.valuation) {
+         const low = DVF.valuation.range_low.toLocaleString();
+         const high = DVF.valuation.range_high.toLocaleString();
+         addLog(`💰 Waardering: €${low} - €${high}`);
+      }
+
       setStep('dvf', 'done', currentMedian ? 'Data beschikbaar' : 'Beperkte data');
       addLog('✔ Marktwaarde berekend');
 
@@ -374,7 +383,6 @@
       let gpuMatch = 'none';
       try {
         let url = `/api/gpu?insee=${com.insee}`;
-        // HIER IS DE MAGIE: We sturen de exacte lat/lon van de autocomplete mee!
         if (com.lat && com.lon) url += `&lat=${com.lat}&lon=${com.lon}`;
         const GPU = await getJSON(url, { signal: aborter.signal });
         if (GPU?.ok) {
@@ -422,11 +430,17 @@
          addLog('✔ Rapport gegenereerd');
          const out = AI.output;
          
+         // AUTO FILL door AI
          if (out.extracted) {
-            if (!currentPrice && out.extracted.price) currentPrice = out.extracted.price;
-            if (!currentSurface && out.extracted.surface) currentSurface = out.extracted.surface;
+            if (!currentPrice && out.extracted.price) {
+                currentPrice = out.extracted.price;
+                addLog(`💡 AI vond prijs: €${currentPrice}`);
+            }
+            if (!currentSurface && out.extracted.surface) {
+                currentSurface = out.extracted.surface;
+                addLog(`💡 AI vond woonopp.: ${currentSurface}m²`);
+            }
             if (out.extracted.plot) currentPlot = out.extracted.plot;
-            if (out.extracted.price) addLog(`💡 AI vond prijs: €${currentPrice}`);
          }
          
          renderActieplan(out.actieplan);
@@ -439,7 +453,7 @@
          throw new Error(AI?.error || 'AI mislukt');
       }
 
-      // Render Final
+      // FINAL RENDER (Met de mogelijk geupdate prijs/meters)
       refreshResults(
         { city: com.name, postcode: hPostcode.value || com.zip, street: hStreet.value, housenr: hHousenr.value }, 
         { name: com.name, insee: com.insee, dvf_note: DVF?.source === 'commune' ? 'Gemeente-data' : 'Fallback' },
