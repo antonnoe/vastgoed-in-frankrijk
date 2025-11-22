@@ -1,7 +1,7 @@
-// /public/script.js  v: final-smart-zoom-v12
+// /public/script.js  v: final-v13-deep-links
 
 (() => {
-  console.log('Immodiagnostique Engine V12 (Smart Zoom) Loaded');
+  console.log('Immodiagnostique Engine V13 (Deep Links) Loaded');
 
   const byId = (id) => document.getElementById(id);
   
@@ -145,7 +145,7 @@
     setupContactButtons(addr, cp);
   };
 
-  // --- HIER ZIT DE SLIMME KAART LOGICA ---
+  // --- HIER ZIT DE FIX VOOR DE LINKS ---
   const renderEnv = ({ insee, risks, gpu, matchType, lat, lon, isExactAddress }) => {
     // 1. Badges
     if (envBadges) {
@@ -164,39 +164,49 @@
 
       if (gpu && gpu.length > 0) {
         const z = gpu[0];
-        const code = z.code || z.type || 'Plan';
-        const label = z.label || '';
-        // Blauw = Exact Perceel, Oranje = Gemeente
-        const badgeStyle = matchType === 'exact' 
-          ? 'background:#e3f2fd; color:#0d47a1; border:1px solid #90caf9;' 
-          : 'background:#fff3e0; color:#e65100; border:1px solid #ffcc80;';
+        const label = z.code || z.type || 'Plan';
+        const desc = z.label || '';
+        const style = matchType === 'exact' ? 'background:#e3f2fd; color:#0d47a1; border:1px solid #90caf9;' : 'background:#fff3e0; color:#e65100; border:1px solid #ffcc80;';
         const icon = matchType === 'exact' ? '📍' : '🏙️';
-        html += `<span class="badge" style="${badgeStyle}">${icon} PLU: ${code} ${label ? `(${label})` : ''}</span>`;
+        html += `<span class="badge" style="${style}">${icon} PLU: ${label} ${desc ? `(${desc})` : ''}</span>`;
       } else {
         html += `<span class="badge">🏗️ PLU: Geen digitaal plan</span>`;
       }
       envBadges.innerHTML = html;
     }
 
-    // 2. Externe Links (SMART ZOOM)
+    // 2. EXTERNE LINKS (GECORRIGEERD & UITGEBREID)
     if (envLinks && insee) {
-      // Bepaal Zoom: 17 als we exact adres hebben, 13 als we alleen de gemeente hebben
-      const zoomLevel = isExactAddress ? 17 : 13;
-      
-      // Bepaal Center: lat/lon van huis OF lat/lon van gemeente
-      const centerParams = (lat && lon) ? `&lat=${lat}&lng=${lon}` : '';
+      // Zoom & Center logic
+      const zoom = isExactAddress ? 17 : 13;
+      const center = (lat && lon) ? `&lat=${lat}&lng=${lon}` : '';
 
-      // Explore Gouv (Jouw specifieke URL wens)
-      // filtre=tous om zeker te zijn dat we alles zien (huis+appt)
-      const urlExplore = `https://explore.data.gouv.fr/fr/immobilier?onglet=carte&filtre=tous&code=${insee}&level=commune${centerParams}&zoom=${zoomLevel}`;
+      // 1. Explore Data (Kaart) - filtre=maison
+      const urlMap = `https://explore.data.gouv.fr/fr/immobilier?onglet=carte&filtre=maison&code=${insee}&level=commune${center}&zoom=${zoom}`;
       
+      // 2. Explore Data (Tabel) - DE TAB DIE JIJ WILDE
+      const urlTable = `https://explore.data.gouv.fr/fr/immobilier?onglet=tableau&filtre=maison&code=${insee}&level=commune${center}&zoom=${zoom}`;
+      
+      // 3. Géoportail Urbanisme
       const urlGPU = `https://www.geoportail-urbanisme.gouv.fr/recherche?insee=${insee}`;
+      
+      // 4. Géorisques (Fixed URL)
       const urlGeo = `https://www.georisques.gouv.fr/commune/${insee}`;
 
+      // 5. ARCEP (Internet/Glasvezel) - Bonus Feature
+      // Werkt het beste met gecombineerd adres
+      const addressQuery = addressInput.value || "";
+      const urlArcep = `https://maconnexioninternet.arcep.fr/?q=${encodeURIComponent(addressQuery)}`;
+
+      // Render Knoppen (Met duidelijke styling)
       envLinks.innerHTML = `
-        <a href="${urlExplore}" target="_blank" rel="noopener" class="ext-link" style="border-color:#000091; color:#000091; font-weight:700;">🇫🇷 Bekijk Prijzenkaart</a>
-        <a href="${urlGPU}" target="_blank" rel="noopener" class="ext-link">🌍 Géoportail</a>
-        <a href="${urlGeo}" target="_blank" rel="noopener" class="ext-link">⚠️ Géorisques</a>
+        <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:10px;">
+            <a href="${urlMap}" target="_blank" class="ext-link" style="color:#000091; border-color:#000091;">🇫🇷 Prijzenkaart</a>
+            <a href="${urlTable}" target="_blank" class="ext-link" style="color:#000091; border-color:#000091;">📊 Prijzentabel</a>
+            <a href="${urlGPU}" target="_blank" class="ext-link">🌍 Bestemmingsplan</a>
+            <a href="${urlGeo}" target="_blank" class="ext-link">⚠️ Risico's</a>
+            <a href="${urlArcep}" target="_blank" class="ext-link">📡 Internet Check</a>
+        </div>
       `;
     }
   };
@@ -214,10 +224,15 @@
   const renderPriceCompare = (p, s, m) => {
     if (!priceCmpBox) return;
     priceCmpBox.innerHTML = '';
-    if (!p || !s) { priceCmpBox.innerHTML='<div class="pc-row pc-note">Wacht op data...</div>'; return; }
+    
+    if (!p || !s) {
+      priceCmpBox.innerHTML = '<div class="pc-row pc-note">Prijzen worden geanalyseerd...</div>';
+      return;
+    }
     
     const askPerM2 = Math.round(p / s);
     let html = `<div class="pc-row"><span class="k">Vraagprijs per m²:</span> <span class="v">${euro(askPerM2)}/m²</span></div>`;
+    
     if (m) {
       const deltaPct = ((askPerM2 - m) / m) * 100;
       const dir = deltaPct >= 0 ? 'boven' : 'onder';
@@ -266,7 +281,6 @@
     // GPS & Precisie Check
     const lat = hLat.value;
     const lon = hLon.value;
-    // Als hLat gevuld is, betekent dit dat de gebruiker de Autocomplete heeft gebruikt = Exact Adres.
     const isExactAddress = !!(lat && lon); 
 
     currentPrice = inputPrice || 0;
@@ -288,7 +302,6 @@
       if (!C?.ok || !C?.commune?.insee) throw new Error('Gemeente niet gevonden.');
       const com = C.commune;
       
-      // Gebruik exacte coords indien beschikbaar, anders gemeente-centrum
       const finalLat = isExactAddress ? lat : com.lat;
       const finalLon = isExactAddress ? lon : com.lon;
       
@@ -334,11 +347,9 @@
         if (finalLat && finalLon) url += `&lat=${finalLat}&lon=${finalLon}`;
         const GPU = await getJSON(url, { signal: aborter.signal });
         if (GPU?.ok) { gpuData = GPU.zones || []; gpuMatch = GPU.match || 'none'; }
-        
         if (gpuMatch === 'exact') setStep('gpu', 'done', '📍 Exact Perceel');
         else if (gpuMatch === 'commune') setStep('gpu', 'done', '🏙️ Gemeente-plan');
         else setStep('gpu', 'done', 'Geen plan');
-        
         addLog('✔ Zonering vastgesteld');
       } catch (e) { setStep('gpu', 'error'); }
 
@@ -375,7 +386,6 @@
          addLog('✔ Rapport gegenereerd');
          const out = AI.output;
          
-         // Autofill
          if (out.extracted) {
             if (!currentPrice && out.extracted.price) { currentPrice = out.extracted.price; addLog(`💡 AI vond prijs: €${currentPrice}`); }
             if (!currentSurface && out.extracted.surface) { currentSurface = out.extracted.surface; addLog(`💡 AI vond woonopp.: ${currentSurface}m²`); }
@@ -388,7 +398,6 @@
             locationProfileBox.textContent = out.locatie_profiel || '';
             locationProfileBox.hidden = !out.locatie_profiel;
          }
-         // Valuation Text
          if (out.valuation_report && byId('price-compare')) {
              const div = document.createElement('div');
              div.style.marginTop='10px'; div.style.padding='10px'; div.style.background='#fffbe6'; div.style.borderLeft='4px solid #ffe58f'; div.style.whiteSpace='pre-line';
@@ -397,7 +406,7 @@
          }
       } else { throw new Error('AI Fail'); }
 
-      // FINAL RENDER (Nu met de juiste Lat/Lon voor de link!)
+      // FINAL RENDER (Met correcte links)
       refreshResults(
         { city: com.name, postcode: hPostcode.value||com.zip, street: hStreet.value, housenr: hHousenr.value },
         { name: com.name, insee: com.insee, dvf_note: DVF?.source },
@@ -411,7 +420,7 @@
           matchType: gpuMatch, 
           lat: finalLat, 
           lon: finalLon,
-          isExactAddress: isExactAddress // Belangrijk voor de zoom!
+          isExactAddress: isExactAddress 
       });
       
       renderPriceCompare(currentPrice, currentSurface, currentMedian);
